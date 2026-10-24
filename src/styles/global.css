@@ -1,0 +1,211 @@
+
+:root {
+  color-scheme: dark;
+
+  --color-abyss: #0e0b12;
+  --color-panel: #17121d;
+  --color-raised: #1f1827;
+  --color-border: #3b2b3c;
+  --color-parchment: #ede3d1;
+  --color-muted: #a79b8c;
+  --color-ember: #e2553d;
+  --color-copper: #c9825b;
+
+  font-family: system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  color: var(--color-parchment);
+  background: var(--color-abyss);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--color-abyss);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+body,
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-ember);
+  outline-offset: 4px;
+}
+
+::selection {
+  color: var(--color-parchment);
+  background: #74352f;
+}
+
+.boot-shell {
+  position: relative;
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  justify-items: center;
+  overflow: hidden;
+  padding: 32px 20px;
+  background:
+    radial-gradient(
+      ellipse at 50% 42%,
+      rgb(87 42 54 / 17%),
+      transparent 56%
+    ),
+    radial-gradient(
+      ellipse at 8% 12%,
+      rgb(201 130 91 / 7%),
+      transparent 34%
+    ),
+    var(--color-abyss);
+}
+
+.boot-shell::before {
+  position: absolute;
+  inset: 18px;
+  border: 1px solid rgb(201 130 91 / 16%);
+  content: "";
+  pointer-events: none;
+}
+
+.boot-card {
+  position: relative;
+  width: min(100%, 620px);
+  padding: clamp(28px, 6vw, 64px);
+  border: 1px solid var(--color-border);
+  background: rgb(23 18 29 / 93%);
+  box-shadow: 0 28px 100px rgb(0 0 0 / 32%);
+  text-align: center;
+}
+
+.boot-eyebrow {
+  margin: 0 0 30px;
+  color: var(--color-copper);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+}
+
+.boot-emblem {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  margin: 0 auto 18px;
+  place-items: center;
+  border: 1px solid rgb(226 85 61 / 50%);
+  border-radius: 50%;
+  color: var(--color-ember);
+  font-size: 1.8rem;
+}
+
+.boot-card h1 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.5rem, 8vw, 4.7rem);
+  font-weight: 500;
+  letter-spacing: -0.045em;
+}
+
+.boot-card h1 span {
+  color: var(--color-ember);
+}
+
+.boot-description {
+  margin: 18px 0 28px;
+  color: var(--color-muted);
+  line-height: 1.7;
+}
+
+.boot-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 15px;
+  border: 1px solid var(--color-border);
+  background: var(--color-raised);
+  color: var(--color-parchment);
+  font-size: 0.85rem;
+}
+
+.boot-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-copper);
+}
+
+.boot-note {
+  max-width: 390px;
+  margin: 26px auto 0;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  line-height: 1.8;
+}
+
+.boot-footer {
+  position: relative;
+  margin-top: 28px;
+  color: var(--color-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.15em;
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  .boot-shell::before {
+    inset: 8px;
+  }
+
+  .boot-card {
+    padding: 32px 20px;
+  }
+
+  .boot-eyebrow {
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

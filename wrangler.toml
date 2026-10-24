@@ -1,0 +1,8 @@
+
+name = "astral-atlas-edge"
+main = "worker/src/index.js"
+compatibility_date = "2026-10-24"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:5173"
