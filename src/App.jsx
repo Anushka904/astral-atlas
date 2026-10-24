@@ -1,45 +1,40 @@
 
+import { useState } from "react";
+import LandingPage from "./components/LandingPage.jsx";
+
+/**
+ * Root UI entry point.
+ *
+ * This temporary analysis handler verifies that landing-page actions
+ * reach the application correctly. Part 3 replaces it with the
+ * actual ingestion pipeline.
+ */
 export default function App() {
+  const [notice, setNotice] = useState("");
+
+  function handleAnalyze(request) {
+    if (request.kind === "zip") {
+      setNotice(
+        `"${request.file.name}" has been selected. ZIP extraction, ` +
+        "local parsing, and caching will be connected in Part 3. " +
+        "This selection has not uploaded the file."
+      );
+
+      return;
+    }
+
+    setNotice(
+      `Validated ${request.owner}/${request.repo}. ` +
+      "GitHub fetching and browser-side analysis will be connected " +
+      "in Part 3. No repository source files have been fetched yet."
+    );
+  }
+
   return (
-    <main className="boot-shell">
-      <section
-        className="boot-card"
-        aria-labelledby="app-title"
-      >
-        <p className="boot-eyebrow">
-          WEBSTER 2026 / PROBLEM 06
-        </p>
-
-        <div className="boot-emblem" aria-hidden="true">
-          ✦
-        </div>
-
-        <h1 id="app-title">
-          Astral <span>Atlas</span>
-        </h1>
-
-        <p className="boot-description">
-          A new way to navigate unfamiliar code.
-        </p>
-
-        <div className="boot-status" role="status">
-          <span
-            className="boot-status-dot"
-            aria-hidden="true"
-          />
-          Project foundation initialized
-        </div>
-
-        <p className="boot-note">
-          The observatory begins here. Repository ingestion,
-          AST analysis, and the interactive atlas will be
-          connected in the following milestones.
-        </p>
-      </section>
-
-      <footer className="boot-footer">
-        BUILT FOR THE ASTRAL CARTOGRAPHER CHALLENGE
-      </footer>
-    </main>
+    <LandingPage
+      onAnalyze={handleAnalyze}
+      notice={notice}
+      onDismissNotice={() => setNotice("")}
+    />
   );
 }
