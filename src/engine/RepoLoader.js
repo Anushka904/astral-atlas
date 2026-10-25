@@ -1,11 +1,17 @@
 /**
  * Repository ingestion orchestrator for Astral Atlas.
  *
- * WHY:
- * - One class coordinates loading and progress reporting.
- * - GitHub, Edge, ZIP, cache, and queue logic stay in focused modules.
- * - ASTs are never created or transferred by this class.
- * - Individual file failures do not abort the entire repository load.
+ * Responsibilities:
+ * - Validate GitHub repository URLs.
+ * - Resolve the requested/default branch and retrieve the recursive tree.
+ * - Use Atlas Edge and an optional in-memory token after HTTP 403/429.
+ * - Read tsconfig/jsconfig contents separately from source files.
+ * - Apply source filters and the 2,000-file cap.
+ * - Reuse parser summaries from IndexedDB and download missing source files.
+ * - Support local ZIP ingestion through the same result model.
+ *
+ * Source files are fetched into the browser. Atlas Edge is used only for
+ * repository metadata requests and never receives source-code contents here.
  */
 
 import {
@@ -30,6 +36,12 @@ import FetchQueue from "./FetchQueue.js";
 import CacheStore from "./CacheStore.js";
 import { readZipArchive } from "../services/zipService.js";
 
+const MAX_PATH_CONFIG_BYTES = 100 * 1024;
+const MAX_CONFIG_FILES = 32;
+
+/**
+ * Convert a failure into an actionable ingestion error.
+ */
 export class RepoLoadError extends Error {
   constructor(message, {
     code = "REPO_LOAD_FAILED",
@@ -45,7 +57,7 @@ export class RepoLoadError extends Error {
 }
 
 /**
- * Notify the UI without allowing a broken callback to stop ingestion.
+ * Invoke a UI callback without allowing it to break the ingestion pipeline.
  *
  * @param {Function|undefined} callback
  * @param {object} data
@@ -64,7 +76,7 @@ function safeCallback(callback, data, label) {
 }
 
 /**
- * Stop a pipeline operation when the caller cancels it.
+ * Abort immediately when the user has cancelled the operation.
  *
  * @param {AbortSignal|undefined} signal
  */
@@ -76,23 +88,22 @@ function throwIfAborted(signal) {
 }
 
 /**
- * Convert technical failures into actionable messages for the UI.
+ * Convert an upstream failure into a user-facing message.
  *
  * @param {Error} error
  * @param {string} phase
  * @returns {Error}
  */
 function friendlyError(error, phase) {
-  if (
-    error instanceof RepoLoadError ||
-    error instanceof RepoUrlError
-  ) {
-    return error instanceof RepoLoadError
-      ? error
-      : new RepoLoadError(error.message, {
-          code: error.code,
-          cause: error
-        });
+  if (error instanceof RepoLoadError) {
+    return error;
+  }
+
+  if (error instanceof RepoUrlError) {
+    return new RepoLoadError(error.message, {
+      code: error.code,
+      cause: error
+    });
   }
 
   if (error?.name === "AbortError") {
@@ -113,7 +124,7 @@ function friendlyError(error, phase) {
 
   if (status === 401) {
     return new RepoLoadError(
-      "GitHub rejected the request. Check the repository URL and, if using a personal token, verify that it is valid.",
+      "GitHub rejected the request. Check the repository URL and any optional token you supplied.",
       {
         code: "GITHUB_UNAUTHORIZED",
         cause: error
@@ -127,7 +138,7 @@ function friendlyError(error, phase) {
     error?.rateLimited
   ) {
     return new RepoLoadError(
-      "GitHub rejected the metadata request with HTTP 403 or 429. This may be a rate limit or another access restriction. Try Atlas Edge, an optional in-memory personal token, or ZIP upload.",
+      "GitHub rejected the metadata request with HTTP 403 or 429. This may be a rate limit or another access restriction. Try Atlas Edge, an optional in-memory token, or ZIP upload.",
       {
         code: "GITHUB_RATE_LIMITED",
         cause: error
@@ -137,7 +148,7 @@ function friendlyError(error, phase) {
 
   if (error?.name === "NetworkError") {
     return new RepoLoadError(
-      "Astral Atlas couldn't reach GitHub. Check your internet connection and try again, or use a ZIP archive.",
+      "Astral Atlas couldn't reach GitHub. Check your internet connection or use a ZIP archive.",
       {
         code: "NETWORK_ERROR",
         cause: error
@@ -147,7 +158,7 @@ function friendlyError(error, phase) {
 
   if (phase === "tree") {
     return new RepoLoadError(
-      "The repository file tree could not be loaded. Check that the repository is public and try again.",
+      "The repository tree could not be loaded. Verify that the repository is public and try again.",
       {
         code: "TREE_LOAD_FAILED",
         cause: error
@@ -166,8 +177,185 @@ function friendlyError(error, phase) {
 }
 
 /**
- * Coordinate public GitHub and local ZIP ingestion.
+ * Choose path configuration files from a GitHub tree.
+ *
+ * Tree entries are metadata only. The configuration file contents are
+ * fetched separately in loadPathConfigFiles().
+ *
+ * @param {Array<object>} tree
+ * @returns {Array<object>}
  */
+export function findPathConfigEntries(tree) {
+  const entries = (Array.isArray(tree) ? tree : [])
+    .filter((entry) => {
+      if (entry.type !== "blob") {
+        return false;
+      }
+
+      const fileName = String(entry.path ?? "")
+        .split("/")
+        .at(-1)
+        .toLowerCase();
+
+      if (
+        fileName !== "tsconfig.json" &&
+        fileName !== "jsconfig.json"
+      ) {
+        return false;
+      }
+
+      // Reject obviously oversized files based on tree metadata before
+      // requesting their content. Unknown sizes are checked after download.
+      return (
+        !Number.isFinite(entry.size) ||
+        entry.size <= MAX_PATH_CONFIG_BYTES
+      );
+    });
+
+  entries.sort((a, b) => {
+    const aTs = a.path.toLowerCase().endsWith("tsconfig.json");
+    const bTs = b.path.toLowerCase().endsWith("tsconfig.json");
+
+    if (aTs !== bTs) {
+      return aTs ? -1 : 1;
+    }
+
+    const depthDifference =
+      a.path.split("/").length -
+      b.path.split("/").length;
+
+    return depthDifference || a.path.localeCompare(b.path);
+  });
+
+  return entries.slice(0, MAX_CONFIG_FILES);
+}
+
+/**
+ * Fetch selected path configuration files from GitHub.
+ *
+ * @param {object} repo
+ * @param {string} branch
+ * @param {Array<object>} tree
+ * @param {{
+ *   token?:string,
+ *   signal?:AbortSignal,
+ *   fetchQueue?:FetchQueue,
+ *   onProgress?:(event:object)=>void
+ * }} [options]
+ * @returns {Promise<{configFiles:Array<object>,warnings:string[]}>}
+ */
+export async function loadPathConfigFiles(
+  repo,
+  branch,
+  tree,
+  {
+    token,
+    signal,
+    fetchQueue = new FetchQueue({ concurrency: 4 }),
+    onProgress
+  } = {}
+) {
+  const candidates = findPathConfigEntries(tree);
+  const configFiles = [];
+  const warnings = [];
+
+  if (candidates.length === 0) {
+    return { configFiles, warnings };
+  }
+
+  const oversized = (tree ?? []).filter((entry) => {
+    const fileName = String(entry.path ?? "")
+      .split("/")
+      .at(-1)
+      .toLowerCase();
+
+    return (
+      ["tsconfig.json", "jsconfig.json"].includes(fileName) &&
+      Number.isFinite(entry.size) &&
+      entry.size > MAX_PATH_CONFIG_BYTES
+    );
+  });
+
+  if (oversized.length > 0) {
+    warnings.push(
+      `${oversized.length} path configuration file(s) exceeded the 100 KB configuration limit and were ignored.`
+    );
+  }
+
+  const result = await fetchQueue.run(
+    candidates,
+    async (entry, { signal: taskSignal }) => {
+      const content = await fetchRawFile(
+        repo.owner,
+        repo.repo,
+        branch,
+        entry.path,
+        {
+          token,
+          signal: taskSignal
+        }
+      );
+
+      const byteLength = new TextEncoder()
+        .encode(content)
+        .byteLength;
+
+      if (byteLength > MAX_PATH_CONFIG_BYTES) {
+        const error = new Error(
+          "The path configuration exceeds the 100 KB limit."
+        );
+
+        error.code = "PATH_CONFIG_TOO_LARGE";
+
+        throw error;
+      }
+
+      // Return data, never put the config into the AST parser input.
+      return {
+        path: entry.path,
+        content
+      };
+    },
+    {
+      signal,
+      onProgress: (event) => {
+        safeCallback(
+          onProgress,
+          {
+            ...event,
+            stage: "reading-config"
+          },
+          "Configuration progress"
+        );
+      }
+    }
+  );
+
+  for (const item of result) {
+    if (item.status === "fulfilled") {
+      configFiles.push(item.value);
+    } else {
+      warnings.push(
+        `Could not load path configuration ${item.item.path}: ${item.reason?.message ?? "request failed"}.`
+      );
+    }
+  }
+
+  if (
+    candidates.length > 0 &&
+    configFiles.length === 0
+  ) {
+    warnings.push(
+      "No path configuration files could be loaded. Imports will be resolved without tsconfig/jsconfig aliases."
+    );
+  }
+
+  return {
+    configFiles,
+    warnings
+  };
+}
+
 export default class RepoLoader {
   /**
    * @param {{
@@ -179,9 +367,7 @@ export default class RepoLoader {
    */
   constructor({
     cacheStore = new CacheStore(),
-    fetchQueue = new FetchQueue({
-      concurrency: 6
-    }),
+    fetchQueue = new FetchQueue({ concurrency: 6 }),
     edgeClient,
     edgeUrl = ""
   } = {}) {
@@ -190,16 +376,14 @@ export default class RepoLoader {
 
     this.edgeClient =
       edgeClient ??
-      new AtlasEdgeClient({
-        baseUrl: edgeUrl
-      });
+      new AtlasEdgeClient({ baseUrl: edgeUrl });
   }
 
   /**
-   * Resolve the requested branch.
+   * Resolve an explicit branch or discover the repository default branch.
    *
-   * Explicit /tree/branch URLs avoid the metadata request. Otherwise,
-   * GitHub's default branch is obtained from repository metadata.
+   * The metadata endpoint isn't relayed by Atlas Edge in this architecture,
+   * so an optional token can retry a rate-limited metadata request.
    *
    * @param {object} repo
    * @param {{token?:string,signal?:AbortSignal}} [options]
@@ -226,12 +410,14 @@ export default class RepoLoader {
         throw firstError;
       }
 
-      const shouldRetryWithToken =
-        firstError?.rateLimited ||
-        firstError?.status === 403 ||
-        firstError?.status === 429;
-
-      if (shouldRetryWithToken && token?.trim()) {
+      if (
+        (
+          firstError?.rateLimited ||
+          firstError?.status === 403 ||
+          firstError?.status === 429
+        ) &&
+        token?.trim()
+      ) {
         try {
           const metadata = await getRepositoryMetadata(
             repo.owner,
@@ -250,16 +436,7 @@ export default class RepoLoader {
   }
 
   /**
-   * Fetch a recursive Git tree.
-   *
-   * Fallback order:
-   * 1. Direct GitHub request.
-   * 2. Atlas Edge for HTTP 403 or 429.
-   * 3. Optional in-memory personal token.
-   * 4. Ask the user to upload a ZIP if metadata access remains unavailable.
-   *
-   * A generic HTTP failure or network failure does not automatically trigger
-   * the rate-limit fallback chain.
+   * Get the recursive file tree with the intended fallback order.
    *
    * @param {object} repo
    * @param {string} branch
@@ -282,11 +459,8 @@ export default class RepoLoader {
         throw directError;
       }
 
-      /*
-       * IMPORTANT CORRECTION:
-       * Some GitHub 403 responses omit clear rate-limit headers.
-       * Therefore, do not rely on rateLimited alone before attempting Edge.
-       */
+      // A 403 may lack rate-limit headers. The HTTP status itself is a
+      // fallback trigger, although it can also represent another restriction.
       const shouldTryFallback =
         directError?.rateLimited === true ||
         directError?.status === 403 ||
@@ -332,23 +506,23 @@ export default class RepoLoader {
         }
       }
 
-      const cause = edgeError ?? directError;
-
-      const message = this.edgeClient?.configured
-        ? "GitHub returned HTTP 403 or 429, and Atlas Edge could not provide the repository tree. Try an optional personal token kept in memory, or upload a ZIP archive."
-        : "GitHub returned HTTP 403 or 429. Atlas Edge is not configured yet; try an optional personal token kept in memory, or upload a ZIP archive.";
-
-      throw new RepoLoadError(message, {
-        code: "GITHUB_RATE_LIMITED",
-        cause
-      });
+      throw new RepoLoadError(
+        this.edgeClient?.configured
+          ? "GitHub returned HTTP 403 or 429, and Atlas Edge could not provide the tree. Try a personal token kept in memory or upload a ZIP."
+          : "GitHub returned HTTP 403 or 429. Atlas Edge isn't configured yet; try a personal token kept in memory or upload a ZIP.",
+        {
+          code: "GITHUB_RATE_LIMITED",
+          cause: edgeError ?? directError
+        }
+      );
     }
   }
 
   /**
-   * Load a public GitHub repository.
+   * Load a GitHub repository and prepare its JS/TS files and path configs.
    *
-   * Cached summaries are reused. Only cache misses are downloaded.
+   * The returned configFiles are deliberately separate from files: they are
+   * passed to GraphBuilder, not to the source parser.
    *
    * @param {string} input
    * @param {{
@@ -375,15 +549,11 @@ export default class RepoLoader {
       throw friendlyError(error, "url");
     }
 
-    safeCallback(
-      onStage,
-      {
-        stage: "listing",
-        message: "Listing repository files",
-        repo: repo.fullName
-      },
-      "Stage"
-    );
+    safeCallback(onStage, {
+      stage: "listing",
+      message: "Listing repository files",
+      repo: repo.fullName
+    }, "Stage");
 
     const branch = await this.resolveBranch(repo, {
       token,
@@ -406,28 +576,21 @@ export default class RepoLoader {
 
     throwIfAborted(signal);
 
-    safeCallback(
-      onStage,
-      {
-        stage: "filtering",
-        message: "Filtering source files",
-        totalEntries: treeData.tree.length
-      },
-      "Stage"
-    );
+    safeCallback(onStage, {
+      stage: "filtering",
+      message: "Filtering source files",
+      totalEntries: treeData.tree.length
+    }, "Stage");
 
-    const filtered = filterSourceTree(
-      treeData.tree,
-      {
-        subpath: repo.subpath
-      }
-    );
+    const filtered = filterSourceTree(treeData.tree, {
+      subpath: repo.subpath
+    });
 
     const warnings = [];
 
     if (treeData.truncated) {
       warnings.push(
-        "GitHub marked the recursive tree as truncated. The atlas can only include the paths returned by GitHub. Upload a ZIP archive for a local alternative."
+        "GitHub marked the recursive tree as truncated. Only the paths returned by GitHub can be analysed; upload a ZIP archive for a local alternative."
       );
     }
 
@@ -439,7 +602,7 @@ export default class RepoLoader {
 
     if (filtered.skippedCount > 0) {
       warnings.push(
-        `${filtered.skippedCount.toLocaleString()} paths were skipped by source-file filters or repository limits.`
+        `${filtered.skippedCount.toLocaleString()} paths were omitted from the source-file set because of filtering or repository limits. Configuration files can still be loaded separately for alias resolution.`
       );
     }
 
@@ -456,15 +619,37 @@ export default class RepoLoader {
       );
     }
 
-    safeCallback(
-      onStage,
+    // Read tsconfig/jsconfig files separately. These are configuration
+    // inputs for GraphBuilder, not source files for Babel.
+    safeCallback(onStage, {
+      stage: "reading-config",
+      message: "Loading path-alias configuration files"
+    }, "Stage");
+
+    const configResult = await loadPathConfigFiles(
+      resolvedRepo,
+      branch,
+      treeData.tree,
       {
-        stage: "checking-cache",
-        message: "Checking the local analysis cache",
-        total: filtered.files.length
-      },
-      "Stage"
+        token,
+        signal,
+        fetchQueue: new FetchQueue({
+          concurrency: 4,
+          maxRetries: 2
+        }),
+        onProgress
+      }
     );
+
+    warnings.push(...configResult.warnings);
+
+    throwIfAborted(signal);
+
+    safeCallback(onStage, {
+      stage: "checking-cache",
+      message: "Checking the local analysis cache",
+      total: filtered.files.length
+    }, "Stage");
 
     let cachedSummaries = new Map();
     let cacheAvailable = true;
@@ -475,7 +660,6 @@ export default class RepoLoader {
       );
     } catch (error) {
       cacheAvailable = false;
-
       warnings.push(
         "Local caching is unavailable in this browser session. The run will continue without cache reuse."
       );
@@ -495,19 +679,13 @@ export default class RepoLoader {
       (file) => file.cachedSummary === null
     );
 
-    let downloadResults = [];
-    let downloadedCount = 0;
-    const failedFiles = [];
+    safeCallback(onStage, {
+      stage: "downloading",
+      message: "Downloading files missing from the cache",
+      total: filesToDownload.length
+    }, "Stage");
 
-    safeCallback(
-      onStage,
-      {
-        stage: "downloading",
-        message: "Downloading files missing from the cache",
-        total: filesToDownload.length
-      },
-      "Stage"
-    );
+    let downloadResults = [];
 
     try {
       downloadResults = await this.fetchQueue.run(
@@ -574,15 +752,18 @@ export default class RepoLoader {
       );
     }
 
-    for (const downloadResult of downloadResults) {
-      const file = filesToDownload[downloadResult.index];
+    let downloadedCount = 0;
+    const failedFiles = [];
 
-      if (downloadResult.status === "fulfilled") {
-        file.content = downloadResult.value;
+    for (const item of downloadResults) {
+      const file = filesToDownload[item.index];
+
+      if (item.status === "fulfilled") {
+        file.content = item.value;
         downloadedCount += 1;
       } else {
         const message =
-          downloadResult.reason?.message ??
+          item.reason?.message ??
           "The source file could not be downloaded.";
 
         file.loadError = message;
@@ -591,7 +772,7 @@ export default class RepoLoader {
           path: file.path,
           sha: file.sha,
           message,
-          status: downloadResult.reason?.status ?? null
+          status: item.reason?.status ?? null
         });
       }
     }
@@ -599,6 +780,7 @@ export default class RepoLoader {
     const result = {
       repo: resolvedRepo,
       files,
+      configFiles: configResult.configFiles,
       warnings,
       failedFiles,
       skippedByReason: filtered.skippedByReason,
@@ -609,6 +791,7 @@ export default class RepoLoader {
         totalTreeEntries: treeData.tree.length,
         candidateCount: filtered.candidateCount,
         eligibleFiles: filtered.files.length,
+        configurationFiles: configResult.configFiles.length,
         cacheHits: files.filter(
           (file) => file.cachedSummary !== null
         ).length,
@@ -636,7 +819,9 @@ export default class RepoLoader {
   }
 
   /**
-   * Load a ZIP file using the same result shape as GitHub ingestion.
+   * Prepare a local ZIP archive.
+   *
+   * Path configuration files remain separate from parser input.
    *
    * @param {File} file
    * @param {{
@@ -653,15 +838,11 @@ export default class RepoLoader {
   } = {}) {
     throwIfAborted(signal);
 
-    safeCallback(
-      onStage,
-      {
-        stage: "listing",
-        message: "Inspecting the local ZIP archive",
-        source: "zip"
-      },
-      "Stage"
-    );
+    safeCallback(onStage, {
+      stage: "listing",
+      message: "Inspecting the local ZIP archive",
+      source: "zip"
+    }, "Stage");
 
     const archive = await readZipArchive(file, {
       signal,
@@ -691,30 +872,24 @@ export default class RepoLoader {
       );
     }
 
-    safeCallback(
-      onStage,
-      {
-        stage: "checking-cache",
-        message: "Checking the local analysis cache",
-        total: archive.files.length
-      },
-      "Stage"
-    );
+    safeCallback(onStage, {
+      stage: "checking-cache",
+      message: "Checking the local analysis cache",
+      total: archive.files.length
+    }, "Stage");
 
     let cachedSummaries = new Map();
     let cacheAvailable = true;
-
-    const warnings = [];
+    const warnings = [...(archive.warnings ?? [])];
 
     try {
       cachedSummaries = await this.cacheStore.getMany(
-        archive.files.map((file) => file.sha)
+        archive.files.map((item) => item.sha)
       );
     } catch (error) {
       cacheAvailable = false;
-
       warnings.push(
-        "Local caching is unavailable in this browser session. ZIP analysis will continue without cache reuse."
+        "Local caching is unavailable in this browser session. ZIP ingestion will continue without cache reuse."
       );
 
       console.warn("ZIP cache lookup failed.", error);
@@ -732,9 +907,10 @@ export default class RepoLoader {
       );
     }
 
-    const files = archive.files.map((file) => ({
-      ...file,
-      cachedSummary: cachedSummaries.get(file.sha) ?? null,
+    const files = archive.files.map((item) => ({
+      ...item,
+      cachedSummary:
+        cachedSummaries.get(item.sha) ?? null,
       source: "zip",
       loadError: null
     }));
@@ -765,6 +941,7 @@ export default class RepoLoader {
     return {
       repo,
       files,
+      configFiles: archive.configFiles ?? [],
       warnings,
       failedFiles: [],
       skippedByReason: archive.skippedByReason,
@@ -775,6 +952,7 @@ export default class RepoLoader {
         totalTreeEntries: archive.totalEntries,
         candidateCount: archive.candidateCount,
         eligibleFiles: files.length,
+        configurationFiles: archive.configFiles?.length ?? 0,
         cacheHits: files.filter(
           (item) => item.cachedSummary !== null
         ).length,
@@ -790,10 +968,8 @@ export default class RepoLoader {
   }
 
   /**
-   * Retrieve source text if it was not downloaded during ingestion.
-   *
-   * This is useful when an AST summary is cached but the code panel needs
-   * to display the selected file.
+   * Retrieve a source file on demand, for example when a cached summary
+   * exists but a code panel needs the actual source text.
    *
    * @param {object} repo
    * @param {object} file
@@ -832,7 +1008,9 @@ export default class RepoLoader {
         }
       );
 
-      const size = new TextEncoder().encode(content).byteLength;
+      const size = new TextEncoder()
+        .encode(content)
+        .byteLength;
 
       if (size > MAX_SOURCE_FILE_BYTES) {
         throw new RepoLoadError(
@@ -844,7 +1022,6 @@ export default class RepoLoader {
       }
 
       file.content = content;
-
       return content;
     } catch (error) {
       throw friendlyError(error, "source");

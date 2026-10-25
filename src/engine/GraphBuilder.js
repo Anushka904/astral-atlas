@@ -1,12 +1,11 @@
 /**
- * Builds the file-dependency graph from FileInfo summaries.
+ * Build a DependencyGraph from compact parser summaries.
  *
  * WHY:
- * - All file nodes must exist before imports are resolved.
- * - Module resolution is delegated to a reusable utility.
- * - External packages are counted without becoming graph nodes.
- * - Function nodes are file-qualified; calls remain explicitly unresolved
- *   until CallResolver performs scope-aware and cross-file resolution.
+ * - Every file node must exist before module imports are resolved.
+ * - Call references are recorded without name-only guessing.
+ * - Function metadata is qualified by file path.
+ * - tsconfig/jsconfig contents are forwarded to module resolution.
  */
 
 import DependencyGraph from "./DependencyGraph.js";
@@ -18,7 +17,7 @@ import {
 } from "./utils/moduleResolution.js";
 
 /**
- * Accept the parser pool result or an array of parsed summary records.
+ * Normalize parser input.
  *
  * @param {object|Array<object>} input
  * @returns {Array<object>}
@@ -33,12 +32,12 @@ function normalizeParsedInput(input) {
   }
 
   throw new TypeError(
-    "GraphBuilder expects an array of parsed files or a ParserPool result with a results array."
+    "GraphBuilder expects an array of file summaries or a ParserPool result."
   );
 }
 
 /**
- * Extract the source summary from supported input shapes.
+ * Extract the summary from a ParserPool or direct-parser record.
  *
  * @param {object} record
  * @returns {object|null}
@@ -67,10 +66,10 @@ function getSummary(record) {
 }
 
 /**
- * Convert supported config file inputs into a list of path/content pairs.
+ * Normalize supported configuration input shapes.
  *
- * @param {Array<object>|Map<string,string>|object} configFiles
- * @returns {Array<{path:string,content:string|object}>}
+ * @param {Array<object>|Map<string,string>|object|null} configFiles
+ * @returns {Array<{path:string,content:unknown}>}
  */
 function normalizeConfigFiles(configFiles) {
   if (!configFiles) {
@@ -106,12 +105,14 @@ function normalizeConfigFiles(configFiles) {
 }
 
 /**
- * Parse a supplied tsconfig/jsconfig file.
+ * Select the configuration used by this graph build.
  *
- * If both are present, prefer tsconfig.json. The function doesn't traverse
- * the "extends" chain; only the selected file's own options are applied.
+ * This initial integration uses one project-level configuration. It supports
+ * a typical root tsconfig/jsconfig and nested configurations when no
+ * higher-priority root TypeScript config is available. It does not yet
+ * implement a complete per-package "extends" inheritance system.
  *
- * @param {object|null} explicitConfig
+ * @param {object|string|null} explicitConfig
  * @param {Array<object>} configFiles
  * @returns {object}
  */
@@ -128,31 +129,33 @@ function selectPathConfig(explicitConfig, configFiles) {
     return parsePathConfig(explicitConfig);
   }
 
-  const normalized = normalizeConfigFiles(configFiles);
+  const candidates = normalizeConfigFiles(configFiles)
+    .filter((item) => {
+      const fileName =
+        item.path.split("/").at(-1).toLowerCase();
 
-  const usable = normalized.filter((item) => {
-    const name = item.path.split("/").at(-1).toLowerCase();
+      return (
+        fileName === "tsconfig.json" ||
+        fileName === "jsconfig.json"
+      );
+    });
 
-    return (
-      name === "tsconfig.json" ||
-      name === "jsconfig.json"
-    );
-  });
+  candidates.sort((a, b) => {
+    const aTs = a.path.toLowerCase().endsWith("tsconfig.json");
+    const bTs = b.path.toLowerCase().endsWith("tsconfig.json");
 
-  usable.sort((a, b) => {
-    const aIsTs = a.path.toLowerCase().endsWith("tsconfig.json");
-    const bIsTs = b.path.toLowerCase().endsWith("tsconfig.json");
-
-    if (aIsTs !== bIsTs) {
-      return aIsTs ? -1 : 1;
+    if (aTs !== bTs) {
+      return aTs ? -1 : 1;
     }
 
-    // Prefer the configuration closest to the repository root.
-    return a.path.split("/").length -
+    const depthDifference =
+      a.path.split("/").length -
       b.path.split("/").length;
+
+    return depthDifference || a.path.localeCompare(b.path);
   });
 
-  const selected = usable[0];
+  const selected = candidates[0];
 
   if (!selected) {
     return parsePathConfig(null);
@@ -160,10 +163,11 @@ function selectPathConfig(explicitConfig, configFiles) {
 
   if (
     typeof selected.content !== "string" &&
-    (!selected.content || typeof selected.content !== "object")
+    (!selected.content ||
+      typeof selected.content !== "object")
   ) {
     throw new Error(
-      `${selected.path} was provided without readable configuration content.`
+      `${selected.path} was supplied without readable configuration content.`
     );
   }
 
@@ -174,9 +178,7 @@ function selectPathConfig(explicitConfig, configFiles) {
 
 export default class GraphBuilder {
   /**
-   * @param {{
-   *   pathConfig?:object|string|null
-   * }} [options]
+   * @param {{pathConfig?:object|string|null}} [options]
    */
   constructor({
     pathConfig = null
@@ -187,10 +189,7 @@ export default class GraphBuilder {
   }
 
   /**
-   * Resolve one import from an importer path.
-   *
-   * This method is public so callers and tests can inspect resolution
-   * decisions without constructing the complete graph.
+   * Resolve an import against this builder's current path set.
    *
    * @param {string} importerPath
    * @param {string|object} importEntry
@@ -211,14 +210,14 @@ export default class GraphBuilder {
   }
 
   /**
-   * Build a DependencyGraph from parsed file summaries.
+   * Build the graph.
    *
    * @param {object|Array<object>} parsedInput
    * @param {{
    *   configFiles?:Array<object>|Map<string,string>|object,
    *   pathConfig?:object|string|null,
-   *   repoName?:string,
-   *   sourceKind?:string,
+   *   repoName?:string|null,
+   *   sourceKind?:string|null,
    *   repoUrl?:string|null,
    *   branch?:string|null
    * }} [options]
@@ -252,14 +251,14 @@ export default class GraphBuilder {
 
     const normalizedRecords = [];
 
+    // Pass 1: create all file nodes before resolving any relationships.
     for (const record of records) {
       const summary = getSummary(record);
 
       if (!summary) {
         graph.warnings.push({
           code: "MISSING_FILE_SUMMARY",
-          message:
-            "A parser result did not include a file summary.",
+          message: "A parser result did not include a file summary.",
           path: record?.path ?? null
         });
 
@@ -297,6 +296,12 @@ export default class GraphBuilder {
         sha: summary.sha ?? record.sha ?? null
       });
 
+      // DependencyGraph owns graph/node creation. These additional summary
+      // fields are attached here so older graph model methods stay compatible.
+      node.exportBindings = [
+        ...(summary.exportBindings ?? [])
+      ];
+
       normalizedRecords.push({
         path,
         summary,
@@ -306,55 +311,99 @@ export default class GraphBuilder {
 
     this.availablePaths = new Set(graph.nodes.keys());
 
-    // First pass: create every function node so all function IDs are known
-    // before we record their call references.
     const functionIdByFileAndLocalId = new Map();
 
+    // Pass 2: create every function node before recording call references.
     for (const record of normalizedRecords) {
-      const functions = record.summary.functions ?? [];
-
-      for (const fn of functions) {
+      for (const fn of record.summary.functions ?? []) {
         const functionNode = graph.addFunctionNode(
           record.path,
           fn
         );
 
+        functionNode.bindingId = fn.bindingId ?? null;
+        functionNode.exportNames = [...(fn.exportNames ?? [])];
+        functionNode.classExportNames = [
+          ...(fn.classExportNames ?? [])
+        ];
+        functionNode.className = fn.className ?? null;
+        functionNode.classBindingId =
+          fn.classBindingId ?? null;
+        functionNode.ownerBindingId =
+          fn.ownerBindingId ?? null;
+        functionNode.startColumn = fn.startColumn ?? 0;
+        functionNode.endColumn = fn.endColumn ?? 0;
+
+        const localId =
+          fn.id ??
+          `${fn.name ?? "anonymous"}@${fn.startLine ?? 1}:${fn.startColumn ?? 0}`;
+
         functionIdByFileAndLocalId.set(
-          `${record.path}\u0000${fn.id ?? `${fn.name}@${fn.startLine}`}`,
+          `${record.path}\u0000${localId}`,
           functionNode.id
         );
       }
     }
 
-    // Second pass: preserve calls as references. Do not connect them merely
-    // because another function happens to share a name.
+    // Pass 3: record calls with their binding/receiver metadata.
     for (const record of normalizedRecords) {
-      const functions = record.summary.functions ?? [];
+      for (const fn of record.summary.functions ?? []) {
+        const localId =
+          fn.id ??
+          `${fn.name ?? "anonymous"}@${fn.startLine ?? 1}:${fn.startColumn ?? 0}`;
 
-      for (const fn of functions) {
-        const sourceFunctionId = functionIdByFileAndLocalId.get(
-          `${record.path}\u0000${fn.id ?? `${fn.name}@${fn.startLine}`}`
-        );
+        const sourceFunctionId =
+          functionIdByFileAndLocalId.get(
+            `${record.path}\u0000${localId}`
+          );
 
         if (!sourceFunctionId) {
           continue;
         }
 
-        for (const calleeName of new Set(fn.calls ?? [])) {
-          graph.addCallReference(
+        for (const call of fn.calls ?? []) {
+          // Backward compatibility for summaries produced by the earlier
+          // name-only extractor.
+          const callData = typeof call === "string"
+            ? {
+                calleeName: call,
+                callKind: "identifier",
+                bindingChain: []
+              }
+            : call;
+
+          const calleeName = callData.calleeName;
+
+          if (
+            typeof calleeName !== "string" ||
+            !calleeName
+          ) {
+            continue;
+          }
+
+          const reference = graph.addCallReference(
             sourceFunctionId,
             calleeName,
-            { callKind: "name-only" }
+            {
+              line: callData.line ?? null,
+              receiverName: callData.receiverName ?? null,
+              callKind: callData.callKind ?? "name-only"
+            }
           );
+
+          // Preserve richer call-site metadata for CallResolver.
+          Object.assign(reference, {
+            ...callData,
+            targetFunctionIds: [],
+            status: "unresolved"
+          });
         }
       }
     }
 
-    // Third pass: resolve module imports now that every file node exists.
+    // Pass 4: resolve all imports after every file node exists.
     for (const record of normalizedRecords) {
-      const imports = record.summary.imports ?? [];
-
-      for (const importEntry of imports) {
+      for (const importEntry of record.summary.imports ?? []) {
         const resolution = this.resolveImport(
           record.path,
           importEntry

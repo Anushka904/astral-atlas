@@ -1,24 +1,50 @@
 /**
- * Function and call extraction from Babel ASTs.
+ * Extract function definitions and scope-aware call metadata.
  *
  * WHY:
- * The initial call graph records statically visible call names.
- * Later, CallResolver will use scope bindings and module exports to resolve
- * these calls to stable function IDs where the evidence permits it.
+ * Two functions can share a name while referring to different bindings.
+ * This module records Babel's lexical binding identity so CallResolver can
+ * match calls to definitions without guessing based on a name alone.
  *
- * Calls are not claimed to be fully resolved by this extraction pass.
+ * Member calls remain unresolved until the resolver has enough receiver
+ * information to identify a likely method target.
  */
 
 import traverse from "./babelTraverse.js";
-
 import FunctionInfo from "../FunctionInfo.js";
+import { complexityContribution } from "./complexity.js";
 
-import {
-  complexityContribution
-} from "./complexity.js";
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "ObjectMethod",
+  "ClassMethod",
+  "ClassPrivateMethod"
+]);
 
 /**
- * Get a property name when its value is statically known.
+ * Create a stable file-local identity for a Babel binding.
+ *
+ * @param {object|null|undefined} binding
+ * @returns {string|null}
+ */
+function bindingIdentity(binding) {
+  const identifier = binding?.identifier;
+
+  if (!identifier?.name || !identifier.loc?.start) {
+    return null;
+  }
+
+  return (
+    `${identifier.name}@` +
+    `${identifier.loc.start.line}:` +
+    `${identifier.loc.start.column}`
+  );
+}
+
+/**
+ * Return a property name when it is statically known.
  *
  * @param {object|null|undefined} node
  * @param {boolean} [computed]
@@ -35,8 +61,7 @@ function getPropertyName(node, computed = false) {
 
   if (
     node.type === "StringLiteral" ||
-    node.type === "NumericLiteral" ||
-    node.type === "NumericLiteralTypeAnnotation"
+    node.type === "NumericLiteral"
   ) {
     return String(node.value);
   }
@@ -45,49 +70,131 @@ function getPropertyName(node, computed = false) {
 }
 
 /**
- * Find the closest enclosing class name for a method.
+ * Find a class context without crossing a normal function boundary.
+ *
+ * Arrow functions retain lexical `this`, so an arrow nested in a method can
+ * inherit the class context. A nested normal function cannot safely do so.
  *
  * @param {object} path
- * @returns {string|null}
+ * @returns {{className:string|null,classBindingId:string|null,classExportNames:string[]}|null}
  */
-function findEnclosingClassName(path) {
-  let parent = path.parentPath;
+function findClassContext(path) {
+  let current = path.parentPath;
 
-  while (parent) {
-    const node = parent.node;
+  while (current) {
+    if (current.isClassDeclaration() || current.isClassExpression()) {
+      const classNode = current.node;
+      let className = classNode.id?.name ?? null;
+      let classBinding = className
+        ? current.scope.getBinding(className)
+        : null;
 
-    if (
-      node?.type === "ClassDeclaration" ||
-      node?.type === "ClassExpression"
-    ) {
-      return node.id?.name ?? null;
+      if (
+        !className &&
+        current.parentPath?.isVariableDeclarator() &&
+        current.parentPath.node.id.type === "Identifier"
+      ) {
+        className = current.parentPath.node.id.name;
+        classBinding = current.parentPath.scope.getBinding(className);
+      }
+
+      const classExportNames = [];
+      let declarationPath = current;
+
+      if (current.parentPath?.isVariableDeclarator()) {
+        declarationPath = current.parentPath;
+
+        if (declarationPath.parentPath?.isVariableDeclaration()) {
+          declarationPath = declarationPath.parentPath;
+        }
+      }
+
+      if (declarationPath.parentPath?.isExportNamedDeclaration()) {
+        if (className) {
+          classExportNames.push(className);
+        }
+      } else if (
+        declarationPath.parentPath?.isExportDefaultDeclaration()
+      ) {
+        classExportNames.push("default");
+      }
+
+      return {
+        className,
+        classBindingId: bindingIdentity(classBinding),
+        classExportNames
+      };
     }
 
-    parent = parent.parentPath;
+    if (
+      current.isFunction() &&
+      current.node.type !== "ArrowFunctionExpression"
+    ) {
+      return null;
+    }
+
+    current = current.parentPath;
   }
 
   return null;
 }
 
 /**
- * Give functions stable descriptive names when possible.
- *
- * Names alone are not globally unique. The ID in FunctionInfo also includes
- * the source line; a later cross-file resolver will additionally qualify
- * identities using the containing file path.
+ * Locate the object binding that owns an ObjectMethod or object-property
+ * arrow function, when that object is assigned to a local variable.
  *
  * @param {object} path
- * @returns {string}
+ * @returns {string|null}
  */
-function getFunctionName(path) {
-  const node = path.node;
-  const parent = path.parentPath?.node;
+function findObjectOwnerBindingId(path) {
+  let current = path.parentPath;
 
-  if (node.id?.name) {
-    return node.id.name;
+  while (current) {
+    if (current.isFunction() && !current.isArrowFunctionExpression()) {
+      return null;
+    }
+
+    if (current.isObjectExpression()) {
+      const parent = current.parentPath;
+
+      if (
+        parent?.isVariableDeclarator() &&
+        parent.node.id.type === "Identifier"
+      ) {
+        return bindingIdentity(
+          parent.scope.getBinding(parent.node.id.name)
+        );
+      }
+
+      if (
+        parent?.isAssignmentExpression() &&
+        parent.node.left.type === "Identifier"
+      ) {
+        return bindingIdentity(
+          parent.scope.getBinding(parent.node.left.name)
+        );
+      }
+
+      return null;
+    }
+
+    current = current.parentPath;
   }
 
-  // A class or object method is itself the function-like AST node.
+  return null;
+}
+
+/**
+ * Choose the most useful name for a function.
+ *
+ * @param {object} path
+ * @param {{className:string|null}} classContext
+ * @returns {string}
+ */
+function getFunctionName(path, classContext) {
+  const node = path.node;
+  const parent = path.parentPath;
+
   if (
     node.type === "ClassMethod" ||
     node.type === "ClassPrivateMethod"
@@ -96,10 +203,8 @@ function getFunctionName(path) {
       getPropertyName(node.key, node.computed) ??
       "computed-method";
 
-    const className = findEnclosingClassName(path);
-
-    return className
-      ? `${className}.${methodName}`
+    return classContext?.className
+      ? `${classContext.className}.${methodName}`
       : methodName;
   }
 
@@ -110,94 +215,464 @@ function getFunctionName(path) {
     );
   }
 
-  // Function expressions and arrow functions inherit their name from
-  // the variable or property to which they are assigned.
+  // Prefer the outer assigned binding for `const outer = function inner()`.
   if (
-    parent?.type === "VariableDeclarator" &&
-    parent.id?.type === "Identifier"
+    parent?.isVariableDeclarator() &&
+    parent.node.id.type === "Identifier"
   ) {
-    return parent.id.name;
+    return parent.node.id.name;
   }
 
   if (
-    parent?.type === "AssignmentExpression" &&
-    parent.left
-  ) {
-    if (parent.left.type === "Identifier") {
-      return parent.left.name;
-    }
-
-    if (parent.left.type === "MemberExpression") {
-      return (
-        getPropertyName(
-          parent.left.property,
-          parent.left.computed
-        ) ?? "assigned-method"
-      );
-    }
-  }
-
-  if (
-    parent?.type === "ObjectProperty" ||
-    parent?.type === "ClassProperty" ||
-    parent?.type === "ClassPrivateProperty"
+    parent?.isObjectProperty() &&
+    parent.node.key
   ) {
     return (
-      getPropertyName(parent.key, parent.computed) ??
-      "assigned-property"
+      getPropertyName(parent.node.key, parent.node.computed) ??
+      `anonymous@${node.loc?.start.line ?? 1}`
     );
   }
 
-  if (parent?.type === "ExportDefaultDeclaration") {
+  if (node.type === "FunctionDeclaration" && node.id?.name) {
+    return node.id.name;
+  }
+
+  if (
+    parent?.isAssignmentExpression() &&
+    parent.node.left.type === "Identifier"
+  ) {
+    return parent.node.left.name;
+  }
+
+  if (parent?.isExportDefaultDeclaration()) {
     return "default";
   }
 
-  const line = node.loc?.start.line ?? 1;
+  if (node.id?.name) {
+    return node.id.name;
+  }
 
-  return `anonymous@${line}`;
+  return `anonymous@${node.loc?.start.line ?? 1}`;
 }
 
 /**
- * Get the statically visible name of a call target.
+ * Identify an appropriate binding for a function definition.
  *
- * For service.save(), this returns "save". It does not claim that the
- * receiver's runtime identity is known.
+ * Method bodies use ownerBindingId instead because a method isn't itself a
+ * lexical identifier binding.
  *
- * @param {object|null|undefined} callee
+ * @param {object} path
  * @returns {string|null}
  */
-function getStaticCalleeName(callee) {
-  if (!callee) {
+function getFunctionBindingId(path) {
+  const node = path.node;
+  const parent = path.parentPath;
+
+  if (
+    node.type === "ClassMethod" ||
+    node.type === "ClassPrivateMethod" ||
+    node.type === "ObjectMethod"
+  ) {
     return null;
   }
 
-  if (callee.type === "Identifier") {
-    return callee.name;
-  }
-
   if (
-    callee.type === "MemberExpression" ||
-    callee.type === "OptionalMemberExpression"
+    parent?.isVariableDeclarator() &&
+    parent.node.id.type === "Identifier"
   ) {
-    return getPropertyName(
-      callee.property,
-      callee.computed
+    return bindingIdentity(
+      parent.scope.getBinding(parent.node.id.name)
     );
   }
 
-  // A function created and invoked immediately has no stable name here.
   if (
-    callee.type === "FunctionExpression" ||
-    callee.type === "ArrowFunctionExpression"
+    parent?.isObjectProperty() &&
+    parent.node.key?.type === "Identifier"
   ) {
     return null;
+  }
+
+  if (
+    parent?.isAssignmentExpression() &&
+    parent.node.left.type === "Identifier"
+  ) {
+    return bindingIdentity(
+      parent.scope.getBinding(parent.node.left.name)
+    );
+  }
+
+  if (node.type === "FunctionDeclaration" && node.id?.name) {
+    return bindingIdentity(
+      path.scope.getBinding(node.id.name)
+    );
+  }
+
+  if (node.id?.name) {
+    return bindingIdentity(
+      path.scope.getBinding(node.id.name)
+    );
   }
 
   return null;
 }
 
 /**
- * Extract functions, individual complexity scores and named call references.
+ * Return a sequence of binding identities through simple variable aliases.
+ *
+ * For:
+ *   const first = save;
+ *   const second = first;
+ *   second();
+ *
+ * the chain can lead back to the binding for save without guessing by name.
+ *
+ * @param {object|null|undefined} binding
+ * @returns {{bindingChain:string[],terminalBinding:object|null,importInfo:object|null}}
+ */
+function describeBinding(binding) {
+  const bindingChain = [];
+  const visited = new Set();
+
+  let current = binding;
+  let importInfo = null;
+
+  for (let depth = 0; current && depth < 16; depth += 1) {
+    const id = bindingIdentity(current);
+
+    if (!id || visited.has(id)) {
+      break;
+    }
+
+    visited.add(id);
+    bindingChain.push(id);
+
+    const bindingPath = current.path;
+    const declaration = bindingPath?.node;
+
+    if (
+      bindingPath?.isImportSpecifier() ||
+      bindingPath?.isImportDefaultSpecifier() ||
+      bindingPath?.isImportNamespaceSpecifier()
+    ) {
+      const importDeclaration = bindingPath.parentPath?.node;
+      const source = importDeclaration?.source?.value;
+
+      let importedName = null;
+      let importKind = "named";
+
+      if (bindingPath.isImportDefaultSpecifier()) {
+        importedName = "default";
+        importKind = "default";
+      } else if (bindingPath.isImportNamespaceSpecifier()) {
+        importedName = "*";
+        importKind = "namespace";
+      } else {
+        importedName = getPropertyName(
+          declaration.imported,
+          declaration.imported?.type !== "Identifier"
+        );
+      }
+
+      importInfo = {
+        importSource:
+          typeof source === "string" ? source : null,
+        importedName,
+        importKind
+      };
+
+      break;
+    }
+
+    // Follow only simple identifier assignments. We deliberately don't
+    // perform arbitrary data-flow or points-to analysis in this stage.
+    if (
+      bindingPath?.isVariableDeclarator() &&
+      declaration.init?.type === "Identifier"
+    ) {
+      current = bindingPath.scope.getBinding(
+        declaration.init.name
+      );
+
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    bindingChain,
+    terminalBinding: current ?? null,
+    importInfo
+  };
+}
+
+/**
+ * Determine whether a function is directly exported under one or more names.
+ *
+ * Do not climb through an enclosing function: nested local functions must not
+ * accidentally be marked as module exports.
+ *
+ * @param {object} path
+ * @param {string} name
+ * @returns {string[]}
+ */
+function getDirectExportNames(path, name) {
+  if (
+    path.node.type === "ClassMethod" ||
+    path.node.type === "ClassPrivateMethod" ||
+    path.node.type === "ObjectMethod"
+  ) {
+    return [];
+  }
+
+  let current = path.parentPath;
+
+  while (current) {
+    if (current.isExportNamedDeclaration()) {
+      return name && name !== "default" ? [name] : [];
+    }
+
+    if (current.isExportDefaultDeclaration()) {
+      return ["default"];
+    }
+
+    if (
+      current.isFunction() &&
+      current.node !== path.node
+    ) {
+      return [];
+    }
+
+    if (
+      current.isClassDeclaration() ||
+      current.isClassExpression() ||
+      current.isObjectMethod()
+    ) {
+      return [];
+    }
+
+    current = current.parentPath;
+  }
+
+  return [];
+}
+
+/**
+ * Describe a receiver and, for `const item = new Store()`, its constructor.
+ *
+ * @param {object} path
+ * @param {object} receiver
+ * @returns {object}
+ */
+function getReceiverMetadata(path, receiver) {
+  if (!receiver) {
+    return {};
+  }
+
+  if (receiver.type === "ThisExpression") {
+    const classContext = findClassContext(path);
+
+    return {
+      receiverName: "this",
+      receiverBindingId: null,
+      receiverBindingChain: [],
+      receiverKind: "this",
+      callerClassName: classContext?.className ?? null,
+      callerClassBindingId:
+        classContext?.classBindingId ?? null
+    };
+  }
+
+  if (receiver.type !== "Identifier") {
+    return {
+      receiverName: null,
+      receiverBindingId: null,
+      receiverBindingChain: [],
+      receiverKind: "expression"
+    };
+  }
+
+  const binding = path.scope.getBinding(receiver.name);
+  const description = describeBinding(binding);
+
+  const result = {
+    receiverName: receiver.name,
+    receiverBindingId:
+      description.bindingChain[0] ?? null,
+    receiverBindingChain: description.bindingChain,
+    receiverKind: "identifier",
+    ...(description.importInfo
+      ? {
+          receiverImportSource:
+            description.importInfo.importSource,
+          receiverImportedName:
+            description.importInfo.importedName,
+          receiverImportKind:
+            description.importInfo.importKind
+        }
+      : {})
+  };
+
+  // Resolve simple instance creation such as:
+  //   import { Store as Vault } from "./Store.js";
+  //   const store = new Vault();
+  //   store.save();
+  //
+  // The class target is still statically inferred, not guaranteed at runtime.
+  const declarationPath = binding?.path;
+  const initializer = declarationPath?.isVariableDeclarator()
+    ? declarationPath.node.init
+    : null;
+
+  if (
+    initializer?.type === "NewExpression" &&
+    initializer.callee?.type === "Identifier"
+  ) {
+    const classBinding = declarationPath.scope.getBinding(
+      initializer.callee.name
+    );
+
+    const classDescription = describeBinding(classBinding);
+
+    result.receiverClassBindingChain =
+      classDescription.bindingChain;
+
+    if (classDescription.importInfo) {
+      result.receiverClassImportSource =
+        classDescription.importInfo.importSource;
+
+      result.receiverClassImportedName =
+        classDescription.importInfo.importedName;
+
+      result.receiverClassImportKind =
+        classDescription.importInfo.importKind;
+    } else {
+      result.receiverClassName = initializer.callee.name;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Extract a compact call description from an AST call node.
+ *
+ * @param {object} path
+ * @param {object} activeFunction
+ * @returns {object|null}
+ */
+function extractCall(path, activeFunction) {
+  const node = path.node;
+  const isConstructor = node.type === "NewExpression";
+  const callee = node.callee;
+
+  if (!callee) {
+    return null;
+  }
+
+  if (
+    callee.type === "Import" ||
+    (
+      callee.type === "Identifier" &&
+      callee.name === "require"
+    )
+  ) {
+    return null;
+  }
+
+  const line = node.loc?.start.line ?? null;
+  const column = node.loc?.start.column ?? null;
+
+  if (callee.type === "Identifier") {
+    const description = describeBinding(
+      path.scope.getBinding(callee.name)
+    );
+
+    return {
+      calleeName: callee.name,
+      line,
+      column,
+      callKind: isConstructor ? "constructor" : "identifier",
+      localBindingId:
+        description.bindingChain[0] ?? null,
+      bindingChain: description.bindingChain,
+      bindingKind:
+        description.terminalBinding?.kind ?? null,
+      ...(description.importInfo ?? {}),
+      callerClassName:
+        activeFunction.info.className ?? null,
+      callerClassBindingId:
+        activeFunction.info.classBindingId ?? null
+    };
+  }
+
+  if (
+    callee.type === "MemberExpression" ||
+    callee.type === "OptionalMemberExpression"
+  ) {
+    const propertyName = getPropertyName(
+      callee.property,
+      callee.computed
+    );
+
+    const receiver = callee.object;
+    const receiverMetadata = getReceiverMetadata(
+      path,
+      receiver
+    );
+
+    const isThis =
+      receiver?.type === "ThisExpression";
+
+    const isOptional =
+      callee.optional === true ||
+      node.optional === true;
+
+    return {
+      calleeName: propertyName ?? "<computed>",
+      propertyName,
+      line,
+      column,
+      callKind: isConstructor
+        ? "constructor"
+        : propertyName === null
+          ? "dynamic-member"
+          : isThis
+            ? "this-member"
+            : isOptional
+              ? "optional-member"
+              : "member",
+      computed: callee.computed === true,
+      receiverKind:
+        receiverMetadata.receiverKind ?? "expression",
+      ...receiverMetadata,
+      callerClassName:
+        receiverMetadata.callerClassName ??
+        activeFunction.info.className ??
+        null,
+      callerClassBindingId:
+        receiverMetadata.callerClassBindingId ??
+        activeFunction.info.classBindingId ??
+        null
+    };
+  }
+
+  return {
+    calleeName: "<dynamic-expression>",
+    line,
+    column,
+    callKind: isConstructor
+      ? "constructor"
+      : "dynamic-expression",
+    callerClassName:
+      activeFunction.info.className ?? null,
+    callerClassBindingId:
+      activeFunction.info.classBindingId ?? null
+  };
+}
+
+/**
+ * Extract function definitions and call references.
  *
  * @param {object} ast
  * @returns {{
@@ -216,15 +691,39 @@ export function extractFunctions(ast) {
     Function: {
       enter(path) {
         const node = path.node;
-        const name = getFunctionName(path);
+        const classContext = findClassContext(path);
+        const name = getFunctionName(path, classContext);
         const startLine = node.loc?.start.line ?? 1;
-        const endLine =
-          node.loc?.end.line ?? startLine;
+        const endLine = node.loc?.end.line ?? startLine;
+        const startColumn = node.loc?.start.column ?? 0;
+        const endColumn = node.loc?.end.column ?? 0;
+
+        const functionBindingId = getFunctionBindingId(path);
+
+        const ownerBindingId =
+          node.type === "ClassMethod" ||
+          node.type === "ClassPrivateMethod"
+            ? classContext?.classBindingId ?? null
+            : node.type === "ObjectMethod" ||
+                path.parentPath?.isObjectProperty()
+              ? findObjectOwnerBindingId(path)
+              : null;
 
         const info = new FunctionInfo({
           name,
+          id: `${name}@${startLine}:${startColumn}`,
           startLine,
           endLine,
+          startColumn,
+          endColumn,
+          bindingId: functionBindingId,
+          exportNames: getDirectExportNames(path, name),
+          classExportNames:
+            classContext?.classExportNames ?? [],
+          className: classContext?.className ?? null,
+          classBindingId:
+            classContext?.classBindingId ?? null,
+          ownerBindingId,
           cyclomaticComplexity: 1,
           calls: [],
           async: node.async === true,
@@ -235,11 +734,9 @@ export function extractFunctions(ast) {
         const context = {
           info,
           complexity: 1,
-          calls: new Set()
+          calls: new Map()
         };
 
-        // Each AST function node owns its own analysis context. This avoids
-        // accidentally attributing nested function calls to the parent.
         contextByNode.set(node, context);
         functionStack.push(context);
         functions.push(info);
@@ -255,18 +752,16 @@ export function extractFunctions(ast) {
         context.info.cyclomaticComplexity =
           context.complexity;
 
-        context.info.calls = [...context.calls].sort();
+        context.info.calls = [...context.calls.values()];
 
-        const activeContext = functionStack.at(-1);
+        const active = functionStack.at(-1);
 
-        if (activeContext === context) {
+        if (active === context) {
           functionStack.pop();
         } else {
-          // Defensive recovery maintains a usable traversal stack if a
-          // future Babel node visitor introduces unexpected nesting.
           const index = functionStack.lastIndexOf(context);
 
-          if (index >= 0) {
+          if (index !== -1) {
             functionStack.splice(index, 1);
           }
         }
@@ -276,8 +771,7 @@ export function extractFunctions(ast) {
     enter(path) {
       const node = path.node;
 
-      const contribution =
-        complexityContribution(node);
+      const contribution = complexityContribution(node);
 
       if (contribution > 0) {
         fileComplexity += contribution;
@@ -289,12 +783,11 @@ export function extractFunctions(ast) {
         }
       }
 
-      const isCall =
-        node.type === "CallExpression" ||
-        node.type === "OptionalCallExpression" ||
-        node.type === "NewExpression";
-
-      if (!isCall) {
+      if (
+        node.type !== "CallExpression" &&
+        node.type !== "OptionalCallExpression" &&
+        node.type !== "NewExpression"
+      ) {
         return;
       }
 
@@ -304,17 +797,20 @@ export function extractFunctions(ast) {
         return;
       }
 
-      const calleeName = getStaticCalleeName(
-        node.callee
-      );
+      const call = extractCall(path, activeFunction);
 
-      if (
-        calleeName &&
-        calleeName !== "require" &&
-        calleeName !== "import"
-      ) {
-        activeFunction.calls.add(calleeName);
+      if (!call) {
+        return;
       }
+
+      const key = [
+        call.line,
+        call.column,
+        call.callKind,
+        call.calleeName
+      ].join(":");
+
+      activeFunction.calls.set(key, call);
     }
   });
 

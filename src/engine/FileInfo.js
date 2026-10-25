@@ -1,9 +1,12 @@
 /**
- * Compact analysis summary for one JavaScript/TypeScript source file.
+ * Compact analysis summary for one JavaScript/TypeScript file.
  *
- * WHY: The full Babel AST can be large. The rest of Astral Atlas should
- * operate on these small summaries instead of retaining ASTs.
+ * WHY:
+ * - The full Babel AST must remain inside the parsing worker.
+ * - Graph construction needs import, export, function and binding metadata.
+ * - Export bindings preserve cases such as `export { internal as public }`.
  */
+
 export default class FileInfo {
   /**
    * @param {{
@@ -14,6 +17,7 @@ export default class FileInfo {
    *   cyclomaticComplexity?:number,
    *   imports?:object[],
    *   exports?:string[],
+   *   exportBindings?:object[],
    *   functions?:object[],
    *   parseStatus?:string,
    *   parseErrors?:object[],
@@ -31,6 +35,7 @@ export default class FileInfo {
 
     this.imports = [...(data.imports ?? [])];
     this.exports = [...new Set(data.exports ?? [])];
+    this.exportBindings = [...(data.exportBindings ?? [])];
     this.functions = [...(data.functions ?? [])];
 
     this.parseStatus = data.parseStatus ?? "ok";
@@ -39,8 +44,7 @@ export default class FileInfo {
   }
 
   /**
-   * Create a summary for a file that could not be parsed.
-   * The rest of the repository can continue to be processed.
+   * Create an error summary for a single failed source file.
    *
    * @param {string} path
    * @param {string|null} sha
@@ -56,6 +60,7 @@ export default class FileInfo {
       cyclomaticComplexity: 0,
       imports: [],
       exports: [],
+      exportBindings: [],
       functions: [],
       parseStatus: "error",
       parseErrors: [{ message }],
@@ -64,8 +69,7 @@ export default class FileInfo {
   }
 
   /**
-   * Return a structured-clone-safe plain object.
-   * No Babel AST nodes or source text are included.
+   * Return a compact plain object safe for structured cloning.
    *
    * @returns {object}
    */
@@ -82,10 +86,35 @@ export default class FileInfo {
         localNames: [...(entry.localNames ?? [])]
       })),
       exports: [...this.exports],
-      functions: this.functions.map((item) =>
-        typeof item.toJSON === "function"
-          ? item.toJSON()
-          : { ...item, calls: [...(item.calls ?? [])] }
+      exportBindings: this.exportBindings.map(
+        (binding) => ({ ...binding })
+      ),
+      functions: this.functions.map((fn) =>
+        typeof fn.toJSON === "function"
+          ? fn.toJSON()
+          : {
+              ...fn,
+              exportNames: [...(fn.exportNames ?? [])],
+              classExportNames: [
+                ...(fn.classExportNames ?? [])
+              ],
+              calls: (fn.calls ?? []).map((call) =>
+                typeof call === "string"
+                  ? call
+                  : {
+                      ...call,
+                      bindingChain: [
+                        ...(call.bindingChain ?? [])
+                      ],
+                      receiverBindingChain: [
+                        ...(call.receiverBindingChain ?? [])
+                      ],
+                      receiverClassBindingChain: [
+                        ...(call.receiverClassBindingChain ?? [])
+                      ]
+                    }
+              )
+            }
       ),
       parseStatus: this.parseStatus,
       parseErrors: this.parseErrors.map((error) => ({

@@ -1,25 +1,29 @@
 /**
  * Parse JavaScript/TypeScript source into a compact FileInfo summary.
  *
- * The AST is created, traversed, and discarded in the calling worker.
- * The returned object contains no AST nodes and no source text.
+ * The AST is created, traversed, and discarded in this worker-side function.
+ * The result contains serializable summaries, not AST nodes or source text.
  */
 
 import { parse } from "@babel/parser";
 
 import FileInfo from "../FileInfo.js";
+
 import {
   extractImports,
-  extractExports
+  extractExports,
+  extractExportBindings
 } from "./extractImports.js";
-import { extractFunctions } from "./extractFunctions.js";
+
+import {
+  extractFunctions
+} from "./extractFunctions.js";
 
 /**
- * Determine parser plugins from the source filename.
+ * Choose syntax plugins based on the file extension.
  *
- * JS and JSX files accept JSX syntax to accommodate repositories which
- * write React components in .js. Plain .ts files intentionally do not
- * enable JSX because it conflicts with TypeScript angle-bracket assertions.
+ * Plain TypeScript intentionally does not enable JSX because JSX and
+ * TypeScript angle-bracket assertions can be syntactically ambiguous.
  *
  * @param {string} path
  * @returns {string[]}
@@ -59,14 +63,11 @@ function getParserPlugins(path) {
 /**
  * Count physical source lines.
  *
- * Empty source is treated as zero lines. A final newline is not treated
- * as an additional code line.
- *
  * @param {string} source
  * @returns {number}
  */
 function countLines(source) {
-  if (!source.length) {
+  if (source.length === 0) {
     return 0;
   }
 
@@ -75,7 +76,7 @@ function countLines(source) {
 }
 
 /**
- * Convert Babel parser errors into compact serializable messages.
+ * Normalize Babel errors into serializable records.
  *
  * @param {Array<object>} errors
  * @returns {object[]}
@@ -90,7 +91,7 @@ function normalizeParserErrors(errors = []) {
 }
 
 /**
- * Parse source and extract the data used by the atlas.
+ * Parse source and extract the data consumed by the atlas.
  *
  * @param {string} source
  * @param {{path?:string,sha?:string|null}} [options]
@@ -131,6 +132,7 @@ export function parseSource(source, {
   try {
     const imports = extractImports(ast);
     const exports = extractExports(ast);
+    const exportBindings = extractExportBindings(ast);
 
     const {
       functions,
@@ -144,14 +146,10 @@ export function parseSource(source, {
     let tokenCount = 0;
 
     for (const token of ast.tokens ?? []) {
-      // Babel includes an EOF token; it isn't a source token.
       if (token.type?.label !== "eof") {
         tokenCount += 1;
       }
     }
-
-    const parseStatus =
-      parseErrors.length > 0 ? "recovered" : "ok";
 
     const summary = new FileInfo({
       path,
@@ -161,8 +159,10 @@ export function parseSource(source, {
       cyclomaticComplexity,
       imports,
       exports,
+      exportBindings,
       functions,
-      parseStatus,
+      parseStatus:
+        parseErrors.length > 0 ? "recovered" : "ok",
       parseErrors,
       warning:
         parseErrors.length > 0
@@ -170,7 +170,6 @@ export function parseSource(source, {
           : null
     });
 
-    // Do not keep references to the full AST after extracting the summary.
     return summary.toJSON();
   } catch (error) {
     return FileInfo.failed(

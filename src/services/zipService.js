@@ -2,9 +2,10 @@
  * Local ZIP archive reader for Astral Atlas.
  *
  * WHY:
- * - ZIP ingestion should not require any network connection.
- * - Local files must use the same path filters and Git blob SHA format.
- * - Archive limits reduce the risk of exhausting browser memory.
+ * - ZIP ingestion must not require a network connection.
+ * - Source files use the same filters and Git blob SHA as GitHub ingestion.
+ * - tsconfig/jsconfig files are returned separately for GraphBuilder.
+ * - Archive limits reduce the risk of excessive browser memory usage.
  */
 
 import { unzipSync, strFromU8 } from "fflate";
@@ -24,6 +25,7 @@ import {
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 50000;
+const MAX_PATH_CONFIG_BYTES = 100 * 1024;
 
 function readUint16(bytes, offset) {
   return bytes[offset] | (bytes[offset + 1] << 8);
@@ -39,10 +41,10 @@ function readUint32(bytes, offset) {
 }
 
 /**
- * Inspect the ZIP central directory before decompression.
+ * Inspect the classic ZIP central directory before decompression.
  *
- * Classic ZIP central-directory sizes make it possible to reject
- * oversized archives before asking fflate to expand their contents.
+ * This deliberately rejects ZIP64 and encrypted entries rather than
+ * attempting to process every possible ZIP variant.
  *
  * @param {Uint8Array} bytes
  * @returns {{entryCount:number,expandedBytes:number}}
@@ -61,6 +63,7 @@ function inspectZipDirectory(bytes) {
     offset -= 1
   ) {
     if (
+      offset >= 0 &&
       readUint32(bytes, offset) === 0x06054b50
     ) {
       endOffset = offset;
@@ -98,15 +101,12 @@ function inspectZipDirectory(bytes) {
     );
   }
 
-  if (entryCount !== entriesOnDisk) {
+  if (
+    entryCount !== entriesOnDisk ||
+    entryCount > MAX_ARCHIVE_ENTRIES
+  ) {
     throw new Error(
-      "The ZIP entry count is inconsistent."
-    );
-  }
-
-  if (entryCount > MAX_ARCHIVE_ENTRIES) {
-    throw new Error(
-      `This ZIP has more than ${MAX_ARCHIVE_ENTRIES.toLocaleString()} entries.`
+      "The ZIP entry count is inconsistent or exceeds the safety limit."
     );
   }
 
@@ -164,10 +164,11 @@ function inspectZipDirectory(bytes) {
       );
     }
 
-    // Read the filename to validate that the directory entry is
-    // structurally present. Actual path filtering happens after unzip.
     decoder.decode(
-      bytes.subarray(cursor + 46, cursor + 46 + fileNameLength)
+      bytes.subarray(
+        cursor + 46,
+        cursor + 46 + fileNameLength
+      )
     );
 
     expandedBytes += uncompressedSize;
@@ -188,40 +189,77 @@ function inspectZipDirectory(bytes) {
 }
 
 /**
- * Strip a common top-level directory from a GitHub ZIP archive.
+ * Determine whether an entry is a path configuration file.
  *
- * GitHub archives normally contain a single root directory, such as
- * repository-main/. Removing it gives the graph repository-relative paths.
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isPathConfigFile(path) {
+  const name = path.split("/").at(-1).toLowerCase();
+
+  return (
+    name === "tsconfig.json" ||
+    name === "jsconfig.json"
+  );
+}
+
+/**
+ * Strip a common wrapper directory from a typical repository ZIP.
+ *
+ * A single common directory is only stripped when the archive also has a
+ * recognizable repository-root marker. This avoids mistakenly stripping an
+ * actual source directory when the ZIP contains only files beneath src/.
  *
  * @param {string[]} paths
  * @returns {Map<string,string>}
  */
 function makeRelativePathMap(paths) {
-  const normalizedPaths = paths.map((path) => ({
-    original: path,
-    normalized: normalizeRepoPath(path)
+  const normalizedPaths = paths.map((original) => ({
+    original,
+    normalized: normalizeRepoPath(original)
   }));
 
   const validPaths = normalizedPaths.filter(
     (item) => item.normalized
   );
 
-  const firstParts = validPaths.map(
+  const pathSegments = validPaths.map(
     ({ normalized }) => normalized.split("/")
   );
 
-  const firstSegment = firstParts[0]?.[0];
+  const commonRoot = pathSegments[0]?.[0];
 
-  const hasSingleRoot =
-    Boolean(firstSegment) &&
-    firstParts.every(
-      (parts) =>
-        parts.length > 1 &&
-        parts[0] === firstSegment
+  const sharesSingleRoot =
+    Boolean(commonRoot) &&
+    pathSegments.every(
+      (segments) =>
+        segments.length > 1 &&
+        segments[0] === commonRoot
     );
 
-  const prefix = hasSingleRoot
-    ? `${firstSegment}/`
+  const rootMarkers = new Set([
+    "package.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    "readme.md",
+    ".gitignore",
+    "license",
+    "license.md",
+    "license.txt",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "package-lock.json"
+  ]);
+
+  const hasRootMarker = sharesSingleRoot &&
+    pathSegments.some((segments) =>
+      rootMarkers.has(
+        segments.slice(1)[0]?.toLowerCase() ?? ""
+      )
+    );
+
+  const prefix = hasRootMarker
+    ? `${commonRoot}/`
     : "";
 
   return new Map(
@@ -234,6 +272,12 @@ function makeRelativePathMap(paths) {
   );
 }
 
+/**
+ * Safely notify ZIP progress listeners.
+ *
+ * @param {Function|undefined} callback
+ * @param {object} event
+ */
 function reportProgress(callback, event) {
   if (typeof callback !== "function") {
     return;
@@ -242,18 +286,28 @@ function reportProgress(callback, event) {
   try {
     callback(event);
   } catch (error) {
-    console.error(
-      "ZIP progress callback failed.",
-      error
-    );
+    console.error("ZIP progress callback failed.", error);
   }
 }
 
 /**
- * Unpack a ZIP and return eligible JavaScript/TypeScript files.
+ * Throw if archive ingestion has been cancelled.
  *
- * Returned file records include source content because the files are
- * already available locally. They do not include an AST.
+ * @param {AbortSignal|undefined} signal
+ */
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw signal.reason ??
+      new DOMException("Cancelled.", "AbortError");
+  }
+}
+
+/**
+ * Read a local ZIP archive and extract eligible JavaScript/TypeScript files.
+ *
+ * Result:
+ * - `files`: source files with Git blob SHA and content
+ * - `configFiles`: path configuration files for GraphBuilder
  *
  * @param {File} file
  * @param {{
@@ -262,25 +316,14 @@ function reportProgress(callback, event) {
  *   signal?:AbortSignal,
  *   onProgress?:(event:object)=>void
  * }} [options]
- * @returns {Promise<{
- *   files:Array<object>,
- *   candidateCount:number,
- *   skippedCount:number,
- *   skippedByReason:Record<string,number>,
- *   capApplied:boolean,
- *   totalEntries:number,
- *   expandedBytes:number
- * }>}
+ * @returns {Promise<object>}
  */
-export async function readZipArchive(
-  file,
-  {
-    maxFileBytes = MAX_SOURCE_FILE_BYTES,
-    maxFiles = MAX_SOURCE_FILES,
-    signal,
-    onProgress
-  } = {}
-) {
+export async function readZipArchive(file, {
+  maxFileBytes = MAX_SOURCE_FILE_BYTES,
+  maxFiles = MAX_SOURCE_FILES,
+  signal,
+  onProgress
+} = {}) {
   if (!file || typeof file.arrayBuffer !== "function") {
     throw new TypeError(
       "Choose a ZIP file from your computer."
@@ -299,15 +342,13 @@ export async function readZipArchive(
     );
   }
 
-  if (signal?.aborted) {
-    throw signal.reason ??
-      new DOMException("Cancelled.", "AbortError");
-  }
+  throwIfAborted(signal);
 
   const archiveBuffer = await file.arrayBuffer();
   const archiveBytes = new Uint8Array(archiveBuffer);
-
   const stats = inspectZipDirectory(archiveBytes);
+
+  throwIfAborted(signal);
 
   let entries;
 
@@ -320,10 +361,7 @@ export async function readZipArchive(
     );
   }
 
-  if (signal?.aborted) {
-    throw signal.reason ??
-      new DOMException("Cancelled.", "AbortError");
-  }
+  throwIfAborted(signal);
 
   const archivePaths = Object.keys(entries).filter(
     (path) => !path.endsWith("/")
@@ -331,6 +369,8 @@ export async function readZipArchive(
 
   const relativePaths = makeRelativePathMap(archivePaths);
   const skippedByReason = Object.create(null);
+  const warnings = [];
+  const configFiles = [];
   const candidates = [];
 
   const skip = (reason) => {
@@ -339,18 +379,48 @@ export async function readZipArchive(
   };
 
   for (let index = 0; index < archivePaths.length; index += 1) {
-    if (signal?.aborted) {
-      throw signal.reason ??
-        new DOMException("Cancelled.", "AbortError");
-    }
+    throwIfAborted(signal);
 
     const originalPath = archivePaths[index];
     const path = relativePaths.get(originalPath);
-
     const bytes = entries[originalPath];
 
-    if (!(bytes instanceof Uint8Array)) {
+    if (
+      !path ||
+      !(bytes instanceof Uint8Array)
+    ) {
       skip("invalid-entry");
+      continue;
+    }
+
+    // Config files are not parser inputs. Preserve their original content
+    // separately so GraphBuilder can use them for import alias resolution.
+    if (isPathConfigFile(path)) {
+      if (bytes.byteLength > MAX_PATH_CONFIG_BYTES) {
+        skip("config-too-large");
+
+        warnings.push(
+          `${path} exceeded the 100 KB path-configuration limit and was ignored.`
+        );
+
+        continue;
+      }
+
+      if (containsBinaryMarker(bytes)) {
+        skip("binary-config");
+
+        warnings.push(
+          `${path} contains binary data and could not be used for alias resolution.`
+        );
+
+        continue;
+      }
+
+      configFiles.push({
+        path,
+        content: strFromU8(bytes)
+      });
+
       continue;
     }
 
@@ -385,10 +455,7 @@ export async function readZipArchive(
   const files = [];
 
   for (let index = 0; index < selected.length; index += 1) {
-    if (signal?.aborted) {
-      throw signal.reason ??
-        new DOMException("Cancelled.", "AbortError");
-    }
+    throwIfAborted(signal);
 
     const candidate = selected[index];
 
@@ -404,6 +471,7 @@ export async function readZipArchive(
       });
     } catch (error) {
       skip("hash-failure");
+
       console.error(
         `Could not prepare ${candidate.path}.`,
         error
@@ -418,8 +486,33 @@ export async function readZipArchive(
     });
   }
 
+  configFiles.sort((a, b) => {
+    const aTs = a.path.toLowerCase().endsWith("tsconfig.json");
+    const bTs = b.path.toLowerCase().endsWith("tsconfig.json");
+
+    if (aTs !== bTs) {
+      return aTs ? -1 : 1;
+    }
+
+    const depthDifference =
+      a.path.split("/").length -
+      b.path.split("/").length;
+
+    return depthDifference || a.path.localeCompare(b.path);
+  });
+
+  if (configFiles.length > 32) {
+    warnings.push(
+      "More than 32 path configuration files were found. Only the first 32 were retained."
+    );
+
+    configFiles.length = 32;
+  }
+
   return {
     files,
+    configFiles,
+    warnings,
     candidateCount: candidates.length,
     skippedCount: Object.values(skippedByReason).reduce(
       (sum, count) => sum + count,

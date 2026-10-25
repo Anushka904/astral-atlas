@@ -1,17 +1,17 @@
 /**
- * Import and export extraction from Babel ASTs.
+ * Import, export, and re-export extraction from Babel ASTs.
  *
  * WHY:
- * Import edges create the file dependency graph. Re-exports also establish
- * dependencies because an exported symbol may originate in another module.
- *
- * This module returns serializable metadata, never AST nodes.
+ * - Import edges create the module dependency graph.
+ * - Export bindings preserve local symbol aliases.
+ * - Re-exports carry the symbol relationship into another module.
+ * - All outputs remain plain metadata rather than AST nodes.
  */
 
 import traverse from "./babelTraverse.js";
 
 /**
- * Return a statically known string value.
+ * Get a statically known string literal.
  *
  * @param {object|null|undefined} node
  * @returns {string|null}
@@ -34,7 +34,7 @@ function getStringLiteral(node) {
 }
 
 /**
- * Convert a statically known identifier or literal to a string.
+ * Get a statically known identifier or literal name.
  *
  * @param {object|null|undefined} node
  * @returns {string|null}
@@ -59,7 +59,33 @@ function getName(node) {
 }
 
 /**
- * Construct a compact dependency record.
+ * Return a stable identity for a Babel lexical binding.
+ *
+ * The same declaration yields the same ID throughout one file. The graph
+ * later qualifies this ID with the repository-relative file path.
+ *
+ * @param {object|null|undefined} binding
+ * @returns {string|null}
+ */
+function bindingIdentity(binding) {
+  const identifier = binding?.identifier;
+
+  if (
+    !identifier?.name ||
+    !identifier.loc?.start
+  ) {
+    return null;
+  }
+
+  return (
+    `${identifier.name}@` +
+    `${identifier.loc.start.line}:` +
+    `${identifier.loc.start.column}`
+  );
+}
+
+/**
+ * Build a compact module dependency record.
  *
  * @param {string} source
  * @param {object} sourceNode
@@ -79,16 +105,7 @@ function makeImport(source, sourceNode, kind) {
 }
 
 /**
- * Extract module references statically identifiable in the AST.
- *
- * Supported forms:
- * - import ... from "module"
- * - export ... from "module"
- * - import("module")
- * - require("module")
- *
- * Dynamic expressions such as import("./modules/" + name) are intentionally
- * excluded because the target cannot be identified from the string alone.
+ * Extract statically identifiable module imports.
  *
  * @param {object} ast
  * @returns {object[]}
@@ -121,12 +138,7 @@ export function extractImports(ast) {
           return;
         }
 
-        const entry = makeImport(
-          source,
-          node,
-          "static"
-        );
-
+        const entry = makeImport(source, node, "static");
         entry.typeOnly = node.importKind === "type";
 
         for (const specifier of node.specifiers ?? []) {
@@ -167,12 +179,7 @@ export function extractImports(ast) {
           return;
         }
 
-        const entry = makeImport(
-          source,
-          node,
-          "re-export"
-        );
-
+        const entry = makeImport(source, node, "re-export");
         entry.typeOnly = node.exportKind === "type";
 
         for (const specifier of node.specifiers ?? []) {
@@ -216,28 +223,22 @@ export function extractImports(ast) {
         const source = getStringLiteral(node.source);
 
         if (source !== null) {
-          addImport(
-            makeImport(source, node, "dynamic")
-          );
+          addImport(makeImport(source, node, "dynamic"));
         }
 
         return;
       }
 
-      // Some Babel AST configurations represent import() as a CallExpression.
       if (node.type !== "CallExpression") {
         return;
       }
 
+      // Babel versions/configurations can represent import() as a call.
       if (node.callee?.type === "Import") {
-        const source = getStringLiteral(
-          node.arguments?.[0]
-        );
+        const source = getStringLiteral(node.arguments?.[0]);
 
         if (source !== null) {
-          addImport(
-            makeImport(source, node, "dynamic")
-          );
+          addImport(makeImport(source, node, "dynamic"));
         }
 
         return;
@@ -247,14 +248,10 @@ export function extractImports(ast) {
         node.callee?.type === "Identifier" &&
         node.callee.name === "require"
       ) {
-        const source = getStringLiteral(
-          node.arguments?.[0]
-        );
+        const source = getStringLiteral(node.arguments?.[0]);
 
         if (source !== null) {
-          addImport(
-            makeImport(source, node, "require")
-          );
+          addImport(makeImport(source, node, "require"));
         }
       }
     }
@@ -264,7 +261,7 @@ export function extractImports(ast) {
 }
 
 /**
- * Collect names declared by identifier and destructuring patterns.
+ * Collect names from supported declaration patterns.
  *
  * @param {object|null|undefined} node
  * @returns {string[]}
@@ -310,7 +307,11 @@ function collectDeclaredNames(node) {
 }
 
 /**
- * Extract names exported by a module.
+ * Collect names exported by a module.
+ *
+ * This returns public names, not the local binding identity. Use
+ * extractExportBindings() when call-target resolution needs the relationship
+ * between a local declaration and its public export name.
  *
  * @param {object} ast
  * @returns {string[]}
@@ -325,50 +326,213 @@ export function extractExports(ast) {
       if (node.type === "ExportDefaultDeclaration") {
         names.add("default");
 
-        const declaration = node.declaration;
-
         if (
-          declaration?.id?.type === "Identifier" &&
-          declaration.id.name
+          node.declaration?.id?.type === "Identifier"
         ) {
-          names.add(declaration.id.name);
+          names.add(node.declaration.id.name);
         }
 
         return;
       }
 
-      if (node.type === "ExportNamedDeclaration") {
-        for (const specifier of node.specifiers ?? []) {
-          const exported = getName(specifier.exported);
+      if (node.type !== "ExportNamedDeclaration") {
+        return;
+      }
 
-          if (exported !== null) {
-            names.add(exported);
-          }
-        }
+      for (const specifier of node.specifiers ?? []) {
+        const exported = getName(specifier.exported);
 
-        const declaration = node.declaration;
-
-        if (
-          declaration?.id?.type === "Identifier" &&
-          declaration.id.name
-        ) {
-          names.add(declaration.id.name);
-        }
-
-        if (declaration?.type === "VariableDeclaration") {
-          for (const declarator of declaration.declarations) {
-            for (const name of collectDeclaredNames(declarator.id)) {
-              names.add(name);
-            }
-          }
+        if (exported !== null) {
+          names.add(exported);
         }
       }
 
-      if (node.type === "ExportAllDeclaration") {
-        names.add("*");
+      const declaration = node.declaration;
+
+      if (
+        declaration?.id?.type === "Identifier"
+      ) {
+        names.add(declaration.id.name);
+      }
+
+      if (declaration?.type === "VariableDeclaration") {
+        for (const declarator of declaration.declarations) {
+          for (const name of collectDeclaredNames(declarator.id)) {
+            names.add(name);
+          }
+        }
       }
     }
   });
 
   return [...names].sort();
+}
+
+/**
+ * Extract relationships from local declarations to module export names.
+ *
+ * Supported forms include:
+ * - export function save() {}
+ * - export const save = () => {}
+ * - export { internalSave as save }
+ * - export default internalSave
+ * - export { original as publicName } from "./other.js"
+ * - export * from "./other.js"
+ *
+ * Re-export relationships are represented with kind "re-export"; GraphBuilder
+ * associates them with a dependency edge. Local exports carry a binding ID.
+ *
+ * @param {object} ast
+ * @returns {object[]}
+ */
+export function extractExportBindings(ast) {
+  const mappings = [];
+  const seen = new Set();
+
+  function add(mapping) {
+    const key = [
+      mapping.exportedName,
+      mapping.localName ?? "",
+      mapping.bindingId ?? "",
+      mapping.source ?? "",
+      mapping.kind
+    ].join("\u0000");
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      mappings.push(mapping);
+    }
+  }
+
+  function localBinding(name, scope) {
+    if (!name || !scope) {
+      return null;
+    }
+
+    return scope.getBinding(name) ?? null;
+  }
+
+  function addLocalExport(exportedName, localName, scope) {
+    const binding = localBinding(localName, scope);
+
+    add({
+      exportedName,
+      localName,
+      bindingId: bindingIdentity(binding),
+      source: null,
+      kind: "local"
+    });
+  }
+
+  traverse(ast, {
+    enter(path) {
+      const node = path.node;
+
+      if (node.type === "ExportDefaultDeclaration") {
+        const declaration = node.declaration;
+
+        if (declaration?.type === "Identifier") {
+          addLocalExport(
+            "default",
+            declaration.name,
+            path.scope
+          );
+        } else if (
+          declaration?.id?.type === "Identifier"
+        ) {
+          addLocalExport(
+            "default",
+            declaration.id.name,
+            path.scope
+          );
+        } else {
+          add({
+            exportedName: "default",
+            localName: null,
+            bindingId: null,
+            source: null,
+            kind: "default-expression"
+          });
+        }
+
+        return;
+      }
+
+      if (node.type !== "ExportNamedDeclaration") {
+        return;
+      }
+
+      if (node.source) {
+        const source = getStringLiteral(node.source);
+
+        if (source === null) {
+          return;
+        }
+
+        for (const specifier of node.specifiers ?? []) {
+          if (specifier.type === "ExportNamespaceSpecifier") {
+            add({
+              exportedName: getName(specifier.exported),
+              localName: null,
+              bindingId: null,
+              source,
+              kind: "re-export-all"
+            });
+
+            continue;
+          }
+
+          add({
+            exportedName: getName(specifier.exported),
+            localName: getName(specifier.local),
+            bindingId: null,
+            source,
+            kind: "re-export"
+          });
+        }
+
+        return;
+      }
+
+      for (const specifier of node.specifiers ?? []) {
+        const localName = getName(specifier.local);
+        const exportedName = getName(specifier.exported);
+
+        if (localName && exportedName) {
+          addLocalExport(
+            exportedName,
+            localName,
+            path.scope
+          );
+        }
+      }
+
+      const declaration = node.declaration;
+
+      if (
+        declaration?.type === "FunctionDeclaration" ||
+        declaration?.type === "ClassDeclaration"
+      ) {
+        if (declaration.id?.name) {
+          addLocalExport(
+            declaration.id.name,
+            declaration.id.name,
+            path.scope
+          );
+        }
+
+        return;
+      }
+
+      if (declaration?.type === "VariableDeclaration") {
+        for (const declarator of declaration.declarations) {
+          for (const name of collectDeclaredNames(declarator.id)) {
+            addLocalExport(name, name, path.scope);
+          }
+        }
+      }
+    }
+  });
+
+  return mappings;
 }

@@ -1,16 +1,13 @@
 /**
  * IndexedDB cache for AST parse summaries and recent repositories.
  *
- * WHY:
- * - IndexedDB is asynchronous and suitable for structured browser data.
- * - Git blob SHA identifies the exact source content.
- * - parserVersion prevents stale analysis from being reused.
- * - Source code itself is not persisted by this store.
+ * Parser version 2 invalidates summaries created before scope-aware call
+ * metadata and exportBindings were added to the parser output.
  */
 
 import { openDB } from "idb";
 
-export const PARSER_VERSION = "1.0.0";
+export const PARSER_VERSION = "2.0.0";
 
 const DATABASE_NAME = "astral-atlas-cache";
 const DATABASE_VERSION = 1;
@@ -26,7 +23,6 @@ export default class CacheStore {
     parserVersion = PARSER_VERSION
   } = {}) {
     this.parserVersion = parserVersion;
-
     this.dbPromise = null;
     this.db = null;
 
@@ -37,10 +33,7 @@ export default class CacheStore {
   }
 
   /**
-   * Open the database lazily.
-   *
-   * Reuse the same opening promise so multiple callers don't unnecessarily
-   * open separate connections to the same database.
+   * Open the database lazily and reuse its promise.
    *
    * @returns {Promise<IDBPDatabase>}
    */
@@ -66,7 +59,7 @@ export default class CacheStore {
 
           blocked() {
             console.warn(
-              "Astral Atlas cache upgrade is waiting for another open tab. Close other Astral Atlas tabs if the upgrade does not proceed."
+              "Astral Atlas cache upgrade is waiting for another open tab."
             );
           }
         }
@@ -74,7 +67,6 @@ export default class CacheStore {
         .then((db) => {
           this.db = db;
 
-          // Reset our reference if the browser terminates the connection.
           db.addEventListener("close", () => {
             if (this.db === db) {
               this.db = null;
@@ -82,8 +74,6 @@ export default class CacheStore {
             }
           });
 
-          // WHY: Closing this connection allows a newer database version
-          // to be installed by another tab or application instance.
           db.addEventListener("versionchange", () => {
             db.close();
 
@@ -96,10 +86,8 @@ export default class CacheStore {
           return db;
         })
         .catch((error) => {
-          // A rejected opening promise must not permanently poison the cache.
           this.dbPromise = null;
           this.db = null;
-
           throw error;
         });
 
@@ -110,7 +98,7 @@ export default class CacheStore {
   }
 
   /**
-   * Check whether a valid parse result exists.
+   * Check whether a compatible parse summary exists.
    *
    * @param {string} blobSha
    * @returns {Promise<boolean>}
@@ -120,22 +108,14 @@ export default class CacheStore {
   }
 
   /**
-   * Retrieve a cached summary for one Git blob SHA.
-   *
-   * WHY: Awaiting tx.done ensures the readonly transaction has completed
-   * before we report the cache lookup as finished.
+   * Retrieve one compatible cached summary.
    *
    * @param {string} blobSha
    * @returns {Promise<object|null>}
    */
   async get(blobSha) {
     const db = await this.open();
-
-    const tx = db.transaction(
-      PARSE_STORE,
-      "readonly"
-    );
-
+    const tx = db.transaction(PARSE_STORE, "readonly");
     const recordPromise = tx.store.get(blobSha);
 
     const [record] = await Promise.all([
@@ -145,22 +125,20 @@ export default class CacheStore {
 
     if (
       !record ||
-      record.parserVersion !== this.parserVersion
+      record.parserVersion !== this.parserVersion ||
+      !record.summary ||
+      typeof record.summary !== "object"
     ) {
       this.stats.misses += 1;
-
       return null;
     }
 
     this.stats.hits += 1;
-
-    return record.summary ?? null;
+    return record.summary;
   }
 
   /**
    * Retrieve many summaries through one read transaction.
-   *
-   * Duplicate SHA values are looked up only once.
    *
    * @param {string[]} blobShas
    * @returns {Promise<Map<string,object>>}
@@ -174,13 +152,8 @@ export default class CacheStore {
     }
 
     const db = await this.open();
+    const tx = db.transaction(PARSE_STORE, "readonly");
 
-    const tx = db.transaction(
-      PARSE_STORE,
-      "readonly"
-    );
-
-    // Queue all reads while the transaction is active.
     const recordPromises = uniqueShas.map(
       (sha) => tx.store.get(sha)
     );
@@ -191,7 +164,6 @@ export default class CacheStore {
     ]);
 
     for (let index = 0; index < uniqueShas.length; index += 1) {
-      const sha = uniqueShas[index];
       const record = records[index];
 
       if (
@@ -200,7 +172,7 @@ export default class CacheStore {
         record.summary &&
         typeof record.summary === "object"
       ) {
-        results.set(sha, record.summary);
+        results.set(uniqueShas[index], record.summary);
         this.stats.hits += 1;
       } else {
         this.stats.misses += 1;
@@ -211,10 +183,7 @@ export default class CacheStore {
   }
 
   /**
-   * Store a parsed summary under its Git blob SHA.
-   *
-   * The parser version is stored with each record so a later extraction
-   * algorithm change can invalidate older summaries.
+   * Store a parse summary using a Git blob SHA.
    *
    * @param {string} blobSha
    * @param {object} summary
@@ -251,35 +220,28 @@ export default class CacheStore {
   }
 
   /**
-   * Delete one cached parse summary.
+   * Delete one parse summary.
    *
    * @param {string} blobSha
    * @returns {Promise<void>}
    */
   async delete(blobSha) {
     const db = await this.open();
-
-    await db.delete(
-      PARSE_STORE,
-      blobSha.toLowerCase()
-    );
+    await db.delete(PARSE_STORE, blobSha.toLowerCase());
   }
 
   /**
-   * Remove all cached parse summaries without deleting repository history.
+   * Clear parse summaries without deleting recent repository history.
    *
    * @returns {Promise<void>}
    */
   async clearParseResults() {
     const db = await this.open();
-
     await db.clear(PARSE_STORE);
   }
 
   /**
-   * Store a repository in recent history.
-   *
-   * A repository is identified by its normalized, case-insensitive name.
+   * Save a recently opened repository.
    *
    * @param {{
    *   owner?:string|null,
@@ -299,10 +261,9 @@ export default class CacheStore {
 
     const fullName =
       repoInfo.fullName ||
-      [
-        repoInfo.owner,
-        repoInfo.repo
-      ].filter(Boolean).join("/");
+      [repoInfo.owner, repoInfo.repo]
+        .filter(Boolean)
+        .join("/");
 
     if (
       typeof fullName !== "string" ||
@@ -326,18 +287,13 @@ export default class CacheStore {
       openedAt: Date.now()
     });
 
-    const all = await db.getAll(RECENT_STORE);
+    const recent = await db.getAll(RECENT_STORE);
 
-    all.sort((a, b) => b.openedAt - a.openedAt);
+    recent.sort((a, b) => b.openedAt - a.openedAt);
 
-    // Use a separate readwrite transaction for deletion. The previous
-    // getAll() call has completed before this transaction is created.
-    const tx = db.transaction(
-      RECENT_STORE,
-      "readwrite"
-    );
+    const tx = db.transaction(RECENT_STORE, "readwrite");
 
-    for (const stale of all.slice(MAX_RECENT_REPOS)) {
+    for (const stale of recent.slice(MAX_RECENT_REPOS)) {
       await tx.store.delete(stale.key);
     }
 
@@ -345,42 +301,33 @@ export default class CacheStore {
   }
 
   /**
-   * Retrieve recent repositories, newest first.
+   * List recent repositories from newest to oldest.
    *
    * @param {number} [limit]
    * @returns {Promise<object[]>}
    */
   async listRecentRepos(limit = MAX_RECENT_REPOS) {
-    if (
-      !Number.isFinite(limit) ||
-      limit < 0
-    ) {
+    if (!Number.isFinite(limit) || limit < 0) {
       throw new RangeError(
-        "The recent repository limit must be a non-negative number."
+        "The recent repository limit must be non-negative."
       );
     }
 
     const db = await this.open();
-    const records = await db.getAll(RECENT_STORE);
+    const recent = await db.getAll(RECENT_STORE);
 
-    return records
+    return recent
       .sort((a, b) => b.openedAt - a.openedAt)
       .slice(0, Math.floor(limit));
   }
 
   /**
-   * Return the current cache statistics.
-   *
-   * The hit rate is a fraction from 0 to 1, not a percentage.
+   * Return cache hit statistics.
    *
    * @returns {{hits:number,misses:number,hitRate:number}}
    */
   getStats() {
-    const {
-      hits,
-      misses
-    } = this.stats;
-
+    const { hits, misses } = this.stats;
     const total = hits + misses;
 
     return {
@@ -391,7 +338,7 @@ export default class CacheStore {
   }
 
   /**
-   * Reset counters without clearing the cached data.
+   * Reset counters without clearing cached records.
    *
    * @returns {void}
    */
@@ -403,16 +350,12 @@ export default class CacheStore {
   }
 
   /**
-   * Close the current database connection.
-   *
-   * The cached promise is cleared so the next operation can reopen it.
-   * This also makes the store easier to clean up in tests.
+   * Close the active database connection.
    *
    * @returns {void}
    */
   close() {
     this.db?.close();
-
     this.db = null;
     this.dbPromise = null;
   }
