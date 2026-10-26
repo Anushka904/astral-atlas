@@ -1,0 +1,697 @@
+/*
+ * Astral Atlas — botanical observatory palette.
+ *
+ * This file is imported after the application styles, so these tokens and
+ * targeted overrides take precedence without deleting the existing layout.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --aa-abyss: #092328;
+  --aa-panel: #0d3434;
+  --aa-raised: #12544f;
+  --aa-border: #28574f;
+
+  --aa-parchment: #e8f5e9;
+  --aa-muted: #a5d6a7;
+
+  --aa-ember: #66bb6a;
+  --aa-copper: #8bbb92;
+  --aa-amethyst: #2a835f;
+  --aa-rose: #a5d6a7;
+  --aa-plum: #12544f;
+
+  --aa-danger-bg: #20352f;
+  --aa-warning-bg: #173c32;
+
+  --aa-code-bg: #071d22;
+  --aa-error: #d17c72;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+body {
+  margin: 0;
+}
+
+.aa-app-root {
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-app-root :focus-visible {
+  outline-color: var(--aa-ember);
+  outline-offset: 3px;
+}
+
+.aa-app-root ::selection {
+  background: rgb(102 187 106 / 0.32);
+  color: var(--aa-parchment);
+}
+
+/* Landing page */
+
+.aa-landing-page {
+  background:
+    radial-gradient(
+      ellipse at 50% 21%,
+      rgb(18 84 79 / 0.46) 0,
+      transparent 47%
+    ),
+    radial-gradient(
+      ellipse at 12% 72%,
+      rgb(42 131 95 / 0.12),
+      transparent 36%
+    ),
+    var(--aa-abyss);
+}
+
+.aa-landing-header {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-brand-mark {
+  border-color: var(--aa-amethyst);
+  color: var(--aa-copper);
+  box-shadow: inset 0 0 18px rgb(42 131 95 / 0.1);
+}
+
+.aa-brand strong span,
+.aa-hero h1 span {
+  color: var(--aa-copper);
+}
+
+.aa-hero-kicker {
+  border-color: var(--aa-amethyst);
+  background: rgb(18 84 79 / 0.28);
+  color: var(--aa-muted);
+}
+
+.aa-live-dot {
+  background: var(--aa-ember);
+  box-shadow: 0 0 10px rgb(102 187 106 / 0.45);
+}
+
+.aa-hero-description {
+  color: var(--aa-muted);
+}
+
+.aa-input-card {
+  border-color: var(--aa-amethyst);
+  background:
+    linear-gradient(
+      140deg,
+      rgb(18 84 79 / 0.46),
+      rgb(9 35 40 / 0.96)
+    );
+  box-shadow: 0 16px 44px rgb(0 0 0 / 0.26);
+}
+
+.aa-repository-input-wrap {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-copper);
+}
+
+.aa-repository-input-wrap input,
+.aa-token-details input {
+  background: transparent;
+  color: var(--aa-parchment);
+}
+
+.aa-repository-input-wrap input::placeholder,
+.aa-token-details input::placeholder {
+  color: #8bbb92;
+  opacity: 0.8;
+}
+
+.aa-token-details input {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+}
+
+.aa-dropzone {
+  border-color: var(--aa-amethyst);
+  background: rgb(9 35 40 / 0.62);
+}
+
+.aa-dropzone:hover,
+.aa-dropzone-active {
+  border-color: var(--aa-ember);
+  background: rgb(102 187 106 / 0.08);
+}
+
+.aa-dropzone-icon {
+  background: rgb(42 131 95 / 0.3);
+  color: var(--aa-parchment);
+}
+
+.aa-privacy-note,
+.aa-sample-description,
+.aa-section-heading > span,
+.aa-how-heading > p:last-child {
+  color: var(--aa-muted);
+}
+
+.aa-sample-card,
+.aa-how-card {
+  border-color: var(--aa-border);
+  background: rgb(13 52 52 / 0.85);
+  color: var(--aa-parchment);
+}
+
+.aa-sample-card:hover {
+  border-color: var(--aa-copper);
+}
+
+.aa-sample-title span,
+.aa-sample-meta,
+.aa-how-card > span {
+  color: var(--aa-copper);
+}
+
+.aa-how-section {
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      rgb(18 84 79 / 0.18),
+      transparent
+    );
+}
+
+.aa-landing-footer {
+  border-top-color: var(--aa-border);
+  color: var(--aa-muted);
+}
+
+.aa-browser-first {
+  color: var(--aa-copper);
+}
+
+/* Shared buttons */
+
+.aa-button-primary {
+  background: var(--aa-ember);
+  color: #092328;
+}
+
+.aa-button-primary:hover:not(:disabled) {
+  background: #8bbb92;
+}
+
+.aa-button-secondary {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+  color: var(--aa-parchment);
+}
+
+.aa-button-secondary:hover:not(:disabled) {
+  border-color: var(--aa-copper);
+  background: var(--aa-raised);
+}
+
+/* Progress timeline and error boundary */
+
+.aa-progress-orb {
+  border-color: var(--aa-amethyst);
+  background:
+    radial-gradient(
+      circle,
+      rgb(42 131 95 / 0.44),
+      var(--aa-abyss) 73%
+    );
+}
+
+.aa-progress-orb span {
+  background: var(--aa-ember);
+  box-shadow: 0 0 12px rgb(102 187 106 / 0.42);
+}
+
+.aa-timeline-step:not(:last-child)::after {
+  background: var(--aa-border);
+}
+
+.aa-step-marker {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+  color: var(--aa-muted);
+}
+
+.aa-step-complete .aa-step-marker {
+  border-color: var(--aa-copper);
+  background: #173c32;
+  color: var(--aa-parchment);
+}
+
+.aa-step-active .aa-step-marker {
+  border-color: var(--aa-ember);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+  box-shadow: 0 0 18px rgb(102 187 106 / 0.15);
+}
+
+.aa-step-active .aa-step-copy strong {
+  color: var(--aa-copper);
+}
+
+.aa-progress-track {
+  background: #214b43;
+}
+
+.aa-progress-fill {
+  background: var(--aa-ember);
+}
+
+.aa-fatal-error details,
+.aa-fatal-error > p:not(.aa-eyebrow) {
+  color: var(--aa-muted);
+}
+
+.aa-fatal-error pre {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-parchment);
+}
+
+/* Alerts remain distinct through their headings and alert roles, not colour
+   alone. The restrained terracotta is reserved for genuine errors. */
+
+.aa-inline-error {
+  border-color: var(--aa-error);
+  background: var(--aa-danger-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-inline-warning,
+.aa-warning-stack p {
+  border-color: var(--aa-copper);
+  background: var(--aa-warning-bg);
+  color: var(--aa-parchment);
+}
+
+/* Workspace and dashboard */
+
+.aa-workspace {
+  background:
+    radial-gradient(
+      ellipse at 50% 0,
+      rgb(42 131 95 / 0.12),
+      transparent 42%
+    ),
+    var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-workspace-header {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-repo-heading > strong {
+  color: var(--aa-parchment);
+}
+
+.aa-shortcuts {
+  border-color: var(--aa-amethyst);
+  background: var(--aa-panel);
+}
+
+.aa-shortcuts-heading button {
+  color: var(--aa-parchment);
+}
+
+.aa-shortcuts kbd {
+  border-color: var(--aa-border);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+}
+
+.aa-summary-metric,
+.aa-insights-panel,
+.aa-atlas-panel,
+.aa-code-panel,
+.aa-benchmark-panel {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+}
+
+.aa-summary-metric span,
+.aa-benchmark-metric span {
+  color: var(--aa-muted);
+}
+
+.aa-summary-metric strong,
+.aa-benchmark-metric strong {
+  color: var(--aa-parchment);
+}
+
+.aa-warning-stack p {
+  border-color: var(--aa-copper);
+}
+
+.aa-workspace-toolbar {
+  border-color: var(--aa-border);
+}
+
+.aa-toolbar-group select,
+.aa-search-wrap input {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-switch-label,
+.aa-search-wrap > span,
+.aa-control-label {
+  color: var(--aa-muted);
+}
+
+.aa-switch-label input {
+  accent-color: var(--aa-ember);
+}
+
+.aa-search-wrap input::placeholder {
+  color: #8bbb92;
+  opacity: 0.82;
+}
+
+.aa-insight-section {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-starter-list > li,
+.aa-cycle-list > li {
+  border-bottom-color: #21453f;
+}
+
+.aa-starter-list > li > button,
+.aa-cycle-list > li > button {
+  color: var(--aa-parchment);
+}
+
+.aa-starter-list > li > button > strong {
+  color: var(--aa-copper);
+}
+
+.aa-cycle-list > li > button strong {
+  color: var(--aa-ember);
+}
+
+.aa-starter-list small,
+.aa-cycle-list small {
+  color: var(--aa-muted);
+}
+
+.aa-file-list button {
+  color: var(--aa-muted);
+}
+
+.aa-file-list button:hover {
+  background: #143b37;
+  color: var(--aa-parchment);
+}
+
+.aa-file-list button.aa-file-active {
+  border-color: var(--aa-amethyst);
+  background: #16443b;
+  color: var(--aa-parchment);
+}
+
+.aa-file-status {
+  background: var(--aa-copper);
+}
+
+.aa-file-error {
+  background: var(--aa-error);
+}
+
+.aa-file-recovered {
+  background: var(--aa-ember);
+}
+
+/* Graph canvas */
+
+.aa-panel-topline {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-graph-legend {
+  color: var(--aa-muted);
+}
+
+.aa-legend-dot {
+  background: var(--aa-copper);
+}
+
+.aa-legend-folder {
+  background: var(--aa-forest, #2a835f);
+}
+
+.aa-legend-cycle {
+  background: var(--aa-ember);
+}
+
+.aa-legend-impact {
+  background: var(--aa-copper);
+}
+
+.aa-legend-error {
+  background: var(--aa-error);
+}
+
+.aa-graph-shell {
+  background:
+    radial-gradient(
+      circle at center,
+      rgb(42 131 95 / 0.12),
+      transparent 62%
+    ),
+    radial-gradient(
+      #2b5b4d 0.7px,
+      transparent 0.7px
+    );
+  background-size: auto, 25px 25px;
+}
+
+.aa-graph-status {
+  border-color: var(--aa-border);
+  background: rgb(9 35 40 / 0.92);
+  color: var(--aa-muted);
+}
+
+.aa-graph-controls button {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+  color: var(--aa-parchment);
+}
+
+.aa-graph-controls button:hover {
+  border-color: var(--aa-copper);
+  background: var(--aa-raised);
+}
+
+.aa-graph-help {
+  color: var(--aa-muted);
+}
+
+.aa-graph-footer {
+  border-top-color: var(--aa-border);
+  color: var(--aa-muted);
+}
+
+/* Complexity heatmap legend and node hover cards */
+
+.aa-heatmap-legend,
+.aa-node-tooltip {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid var(--aa-border);
+  border-radius: 9px;
+  background: rgb(9 35 40 / 0.96);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.25);
+  color: var(--aa-parchment);
+}
+
+.aa-heatmap-legend {
+  top: 48px;
+  left: 12px;
+  display: grid;
+  width: min(245px, calc(100% - 24px));
+  gap: 8px;
+  padding: 12px;
+}
+
+.aa-heatmap-legend > strong {
+  color: var(--aa-copper);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+}
+
+.aa-heatmap-legend > div {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.aa-heatmap-legend > div b {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.aa-heatmap-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--aa-parchment);
+  border-radius: 50%;
+}
+
+.aa-heat-low-dot {
+  background: var(--aa-copper);
+}
+
+.aa-heat-medium-dot {
+  background: var(--aa-ember);
+}
+
+.aa-heat-high-dot {
+  background: var(--aa-amethyst);
+}
+
+.aa-heat-unavailable-dot {
+  border-style: dashed !important;
+  background: #173b3a;
+}
+
+.aa-heatmap-legend p {
+  margin: 2px 0 0;
+  color: var(--aa-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.aa-node-tooltip {
+  display: grid;
+  max-width: 230px;
+  gap: 4px;
+  padding: 10px 12px;
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+
+.aa-node-tooltip strong {
+  color: var(--aa-parchment);
+  font-size: 11px;
+}
+
+.aa-node-tooltip span {
+  color: var(--aa-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+/* Code panel and benchmark */
+
+.aa-code-heading {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-code-path {
+  color: var(--aa-muted);
+}
+
+.aa-code-metrics {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-code-metrics > div {
+  background: var(--aa-raised);
+}
+
+.aa-code-metrics span {
+  color: var(--aa-muted);
+}
+
+.aa-code-metrics strong {
+  color: var(--aa-parchment);
+}
+
+.aa-code-section {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-link-list button,
+.aa-function-list button {
+  color: var(--aa-muted);
+}
+
+.aa-link-list button:hover,
+.aa-function-list button:hover {
+  color: var(--aa-parchment);
+}
+
+.aa-link-list button span:last-child,
+.aa-function-meta,
+.aa-loading-indicator {
+  color: var(--aa-copper);
+}
+
+.aa-function-name {
+  color: var(--aa-parchment);
+}
+
+.aa-editor-heading {
+  border-bottom-color: var(--aa-border);
+  color: var(--aa-parchment);
+}
+
+.aa-editor-empty {
+  color: var(--aa-muted);
+}
+
+.aa-skeleton-line {
+  background: #17433c;
+}
+
+.aa-benchmark-panel {
+  border-color: var(--aa-border);
+}
+
+.aa-workspace-footer {
+  color: var(--aa-muted);
+}
+
+/* The font is rendered locally; these rules only affect canvas sizing. */
+
+.aa-landing-stars {
+  overflow: hidden;
+}
+
+.aa-starfield-canvas {
+  display: block;
+  max-width: none;
+  pointer-events: none;
+}
+
+/* Reduced-motion preferences are respected by the components too. */
+
+@media (prefers-reduced-motion: reduce) {
+  .aa-app-root *,
+  .aa-app-root *::before,
+  .aa-app-root *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
