@@ -1,12 +1,18 @@
 /**
- * Main repository-analysis workspace.
+ * Astral Atlas analysis workspace.
  *
- * WHY:
- * The workspace presents independent graph insights and source navigation
- * while delegating parsing and analysis to AppController.
+ * Navigation contract:
+ * - Selecting a file never opens source code automatically.
+ * - Selecting a file focuses its node in the existing graph.
+ * - A one-hop neighbourhood can be focused independently.
+ * - Source Explorer opens only on an explicit source action.
+ * - The workspace remains mounted beneath Source Explorer.
+ * - Browser Back and the visible Back button return to the same atlas.
  */
 
 import React, {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -18,6 +24,17 @@ import CodePanel from "./CodePanel.jsx";
 
 import BlastRadiusAnalyzer from "../engine/BlastRadiusAnalyzer.js";
 
+import {
+  createSourceExplorerModel,
+  getFileNeighborhood
+} from "../engine/sourceExplorerModel.js";
+
+import "../styles/atlas-navigation.css";
+
+const SourceExplorer = lazy(
+  () => import("./SourceExplorer.jsx")
+);
+
 const numberFormat = new Intl.NumberFormat("en-US");
 
 function Metric({ label, value }) {
@@ -27,6 +44,14 @@ function Metric({ label, value }) {
       <strong>{numberFormat.format(value ?? 0)}</strong>
     </div>
   );
+}
+
+function readHistoryState() {
+  const value = window.history.state;
+
+  return value && typeof value === "object"
+    ? value
+    : {};
 }
 
 /**
@@ -42,8 +67,17 @@ export default function AtlasWorkspace({
   onBack
 }) {
   const graph = analysis.graph;
+
   const graphRef = useRef(null);
   const searchRef = useRef(null);
+
+  // Source text is cached only in this component's memory.
+  const sourceCacheRef = useRef(new Map());
+
+  // Refs let event handlers see the current source-screen state immediately,
+  // without waiting for React to render the next state.
+  const sourceScreenOpenRef = useRef(false);
+  const sourceHistoryEntryRef = useRef(false);
 
   const [selectedPath, setSelectedPath] = useState(
     graph.nodes.keys().next().value ?? null
@@ -53,6 +87,10 @@ export default function AtlasWorkspace({
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState(null);
 
+  const [sourceScreenOpen, setSourceScreenOpen] = useState(false);
+  const [sourceReloadVersion, setSourceReloadVersion] = useState(0);
+  const [jumpToLine, setJumpToLine] = useState(1);
+
   const [layout, setLayout] = useState("fcose");
   const [view, setView] = useState("dependencies");
   const [heatmap, setHeatmap] = useState(false);
@@ -60,9 +98,12 @@ export default function AtlasWorkspace({
   const [blastRadiusPaths, setBlastRadiusPaths] = useState([]);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  const selectedFile = selectedPath
-    ? graph.nodes.get(selectedPath) ?? null
-    : null;
+  const selectedSourceModel = useMemo(
+    () => createSourceExplorerModel(graph, selectedPath),
+    [graph, selectedPath]
+  );
+
+  const selectedFile = selectedSourceModel?.file ?? null;
 
   const fileList = useMemo(
     () => [...graph.nodes.values()].sort(
@@ -85,24 +126,215 @@ export default function AtlasWorkspace({
     );
   }, [fileList, query]);
 
-  const imports = graph.edges.filter(
-    (edge) => edge.source === selectedPath
-  );
+  const selectedFunctions =
+    selectedSourceModel?.functions ?? [];
 
-  const importedBy = graph.edges.filter(
-    (edge) => edge.target === selectedPath
-  );
+  const selectedImports =
+    selectedSourceModel?.imports ?? [];
 
-  const selectedFunctions = [...graph.functionNodes.values()]
-    .filter((fn) => fn.filePath === selectedPath)
-    .sort((a, b) => a.startLine - b.startLine);
+  const selectedImportedBy =
+    selectedSourceModel?.importedBy ?? [];
 
+  /**
+   * Select a file in the graph.
+   *
+   * This intentionally does NOT open Source Explorer.
+   *
+   * @param {string} path
+   */
+  function selectFile(path) {
+    if (!graph.nodes.has(path)) {
+      return;
+    }
+
+    setSelectedPath(path);
+
+    graphRef.current?.focusPaths([path]);
+  }
+
+  /**
+   * Open a selected file in the dedicated source screen.
+   *
+   * The first opening creates a browser history entry. Changing files while
+   * Source Explorer is open replaces that entry rather than adding an entry
+   * for every file. This makes Back return to the Atlas.
+   *
+   * @param {string} path
+   * @param {number} [line]
+   */
+  function openSource(path, line = 1) {
+    if (!graph.nodes.has(path)) {
+      return;
+    }
+
+    const safeLine = Number.isFinite(line) && line > 0
+      ? Math.floor(line)
+      : 1;
+
+    const alreadyOpen = sourceScreenOpenRef.current;
+
+    if (!alreadyOpen) {
+      const currentHistoryState = readHistoryState();
+
+      window.history.pushState(
+        {
+          ...currentHistoryState,
+          astralAtlasSource: true,
+          sourcePath: path,
+          sourceLine: safeLine
+        },
+        "",
+        window.location.href
+      );
+
+      sourceHistoryEntryRef.current = true;
+    } else {
+      const currentHistoryState = readHistoryState();
+
+      // Keep one source-screen history entry while switching between files.
+      if (currentHistoryState.astralAtlasSource === true) {
+        window.history.replaceState(
+          {
+            ...currentHistoryState,
+            sourcePath: path,
+            sourceLine: safeLine
+          },
+          "",
+          window.location.href
+        );
+      }
+    }
+
+    sourceScreenOpenRef.current = true;
+
+    setSelectedPath(path);
+    setJumpToLine(safeLine);
+    setSourceScreenOpen(true);
+
+    // A version of zero allows valid in-memory source-cache entries to be used.
+    setSourceReloadVersion(0);
+  }
+
+  /**
+   * Focus the selected file and its immediate import neighbourhood.
+   *
+   * The rest of the graph remains present. This is a focused view of the
+   * existing dependency graph, not a destructive graph filter.
+   *
+   * @param {string} path
+   */
+  function focusRelated(path) {
+    if (!graph.nodes.has(path)) {
+      return;
+    }
+
+    const neighbourhood = getFileNeighborhood(graph, path);
+
+    setSelectedPath(path);
+
+    graphRef.current?.focusPaths(neighbourhood);
+  }
+
+  /**
+   * Close Source Explorer and return to the existing Atlas.
+   */
+  function handleSourceBack() {
+    sourceScreenOpenRef.current = false;
+    sourceHistoryEntryRef.current = false;
+
+    setSourceScreenOpen(false);
+
+    // The popstate handler also handles a user pressing the browser Back
+    // button. The visible Back button updates the UI immediately.
+    if (window.history.state?.astralAtlasSource === true) {
+      window.history.back();
+    }
+  }
+
+  /**
+   * Reload source after a failed read.
+   */
+  function handleSourceRetry() {
+    if (!selectedPath) {
+      return;
+    }
+
+    sourceCacheRef.current.delete(selectedPath);
+    setSource(null);
+    setSourceError(null);
+    setSourceReloadVersion((version) => version + 1);
+  }
+
+  /**
+   * Respond to browser Back/Forward.
+   *
+   * When Back leaves the source history entry, the Atlas is revealed.
+   * When Forward returns to the source entry, the previous source screen
+   * and selected file are restored.
+   */
+  useEffect(() => {
+    function handlePopState() {
+      const historyState = readHistoryState();
+
+      if (
+        historyState.astralAtlasSource === true &&
+        typeof historyState.sourcePath === "string" &&
+        graph.nodes.has(historyState.sourcePath)
+      ) {
+        sourceHistoryEntryRef.current = true;
+        sourceScreenOpenRef.current = true;
+
+        setSelectedPath(historyState.sourcePath);
+
+        setJumpToLine(
+          Number.isFinite(historyState.sourceLine) &&
+            historyState.sourceLine > 0
+            ? historyState.sourceLine
+            : 1
+        );
+
+        setSourceReloadVersion(0);
+        setSourceScreenOpen(true);
+        return;
+      }
+
+      sourceHistoryEntryRef.current = false;
+      sourceScreenOpenRef.current = false;
+
+      setSourceScreenOpen(false);
+    }
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [graph]);
+
+  /**
+   * Retrieve source only while Source Explorer is open.
+   *
+   * Unavailable source remains a retryable error. Successful source text is
+   * reused while this workspace remains mounted.
+   */
   useEffect(() => {
     let active = true;
 
-    if (!selectedPath) {
-      setSource(null);
+    if (!sourceScreenOpen || !selectedPath) {
+      setSourceLoading(false);
+      return undefined;
+    }
+
+    const forceReload = sourceReloadVersion > 0;
+
+    if (
+      !forceReload &&
+      sourceCacheRef.current.has(selectedPath)
+    ) {
+      setSource(sourceCacheRef.current.get(selectedPath));
       setSourceError(null);
+      setSourceLoading(false);
+
       return undefined;
     }
 
@@ -112,16 +344,22 @@ export default function AtlasWorkspace({
 
     controller.getSource(selectedPath)
       .then((text) => {
-        if (active) {
-          setSource(text);
+        if (!active) {
+          return;
         }
+
+        sourceCacheRef.current.set(selectedPath, text);
+        setSource(text);
       })
       .catch((error) => {
-        if (active) {
-          setSourceError(
-            error?.message ?? "Could not load this source file."
-          );
+        if (!active) {
+          return;
         }
+
+        setSourceError(
+          error?.message ??
+            "Could not load this source file."
+        );
       })
       .finally(() => {
         if (active) {
@@ -132,7 +370,39 @@ export default function AtlasWorkspace({
     return () => {
       active = false;
     };
-  }, [controller, selectedPath]);
+  }, [
+    controller,
+    selectedPath,
+    sourceScreenOpen,
+    sourceReloadVersion
+  ]);
+
+  function selectStarter(starter) {
+    try {
+      const result = new BlastRadiusAnalyzer().analyze(
+        graph,
+        starter.path
+      );
+
+      setBlastRadiusPaths(
+        result.impacted.map((item) => item.path)
+      );
+    } catch (error) {
+      setBlastRadiusPaths([]);
+
+      console.error(
+        "Could not calculate the starter-file blast radius.",
+        error
+      );
+    }
+
+    // Starter selection focuses the graph first; opening source is explicit.
+    selectFile(starter.path);
+  }
+
+  function focusCycle(cycle) {
+    graphRef.current?.focusPaths(cycle.nodes);
+  }
 
   useEffect(() => {
     function handleKeys(event) {
@@ -143,15 +413,27 @@ export default function AtlasWorkspace({
         ? event.metaKey
         : event.ctrlKey;
 
-      if (modifier && event.key.toLowerCase() === "k") {
+      if (
+        modifier &&
+        event.key.toLowerCase() === "k"
+      ) {
         event.preventDefault();
-        searchRef.current?.focus();
+
+        if (!sourceScreenOpenRef.current) {
+          searchRef.current?.focus();
+        }
+
         return;
       }
 
       if (event.key === "Escape") {
-        setQuery("");
-        setShowShortcuts(false);
+        if (sourceScreenOpenRef.current) {
+          handleSourceBack();
+        } else {
+          setQuery("");
+          setShowShortcuts(false);
+        }
+
         return;
       }
 
@@ -160,8 +442,13 @@ export default function AtlasWorkspace({
       if (
         tag === "input" ||
         tag === "textarea" ||
+        tag === "select" ||
         event.target?.isContentEditable
       ) {
+        return;
+      }
+
+      if (sourceScreenOpenRef.current) {
         return;
       }
 
@@ -181,75 +468,46 @@ export default function AtlasWorkspace({
     };
   }, []);
 
-  function selectFile(path) {
-    setSelectedPath(path);
-    setBlastRadiusPaths([]);
-    graphRef.current?.focusPaths([path]);
-  }
-
-  function focusCycle(cycle) {
-    setBlastRadiusPaths([]);
-    graphRef.current?.focusPaths(cycle.nodes);
-  }
-
-  function selectStarter(starter) {
-    setSelectedPath(starter.path);
-
-    try {
-      const result = new BlastRadiusAnalyzer().analyze(
-        graph,
-        starter.path
-      );
-
-      setBlastRadiusPaths(
-        result.impacted.map((item) => item.path)
-      );
-
-      graphRef.current?.focusPaths([starter.path]);
-    } catch (error) {
-      setBlastRadiusPaths([]);
-
-      console.error(
-        "Could not calculate the starter-file blast radius.",
-        error
-      );
-    }
-  }
-
   function exportBenchmark() {
     const payload = {
       product: "Astral Atlas",
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
+
       repository: {
         name: analysis.repo?.fullName ?? null,
         source: analysis.repo?.source ?? null,
         branch: analysis.repo?.branch ?? null
       },
+
       timings: {
         ...analysis.benchmark
       },
+
       graph: {
         ...analysis.stats
       },
+
       cycles: {
         groups: analysis.cycles.cycles.length,
         cyclicFiles: analysis.cycles.cyclicNodes.length
       },
+
       callResolution: {
         ...analysis.callResolution.stats
       },
+
       methodology: {
         fetchMs:
-          "Repository-loading phase, including tree retrieval, cache checking, configuration retrieval and downloads.",
+          "Repository-loading phase, including tree retrieval, configuration retrieval, cache checking and downloads.",
         parseMs:
           "ParserPool duration, including parsing and cache writes.",
         graphMs:
           "Graph construction, call resolution, cycle detection and starter-file ranking.",
         layoutMs:
-          "Cytoscape layout completion duration, measured in the browser.",
+          "Cytoscape layout completion duration.",
         fps:
-          "Approximate requestAnimationFrame frequency; not a guarantee of GPU paint throughput."
+          "Approximate requestAnimationFrame rate, not guaranteed GPU paint throughput."
       }
     };
 
@@ -263,11 +521,14 @@ export default function AtlasWorkspace({
 
     link.href = url;
     link.download = "astral-atlas-benchmark.json";
+
     document.body.appendChild(link);
     link.click();
     link.remove();
 
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 
   const percent = (value) =>
@@ -280,6 +541,7 @@ export default function AtlasWorkspace({
       <header className="aa-workspace-header">
         <div className="aa-brand">
           <div className="aa-brand-mark" aria-hidden="true">✳</div>
+
           <div>
             <strong>Astral Atlas</strong>
             <span>Repository cartography</span>
@@ -287,7 +549,8 @@ export default function AtlasWorkspace({
         </div>
 
         <div className="aa-repo-heading">
-          <span className="aa-eyebrow">CURRENT EXPEDITION</span>
+          <span className="aa-eyebrow">CURRENT REPOSITORY</span>
+
           <strong title={analysis.repo?.fullName}>
             {analysis.repo?.fullName ?? analysis.repo?.repo}
           </strong>
@@ -321,9 +584,14 @@ export default function AtlasWorkspace({
       </header>
 
       {showShortcuts && (
-        <div className="aa-shortcuts" role="dialog" aria-label="Keyboard shortcuts">
+        <div
+          className="aa-shortcuts"
+          role="dialog"
+          aria-label="Keyboard shortcuts"
+        >
           <div className="aa-shortcuts-heading">
             <strong>Keyboard shortcuts</strong>
+
             <button
               type="button"
               aria-label="Close shortcuts"
@@ -334,7 +602,7 @@ export default function AtlasWorkspace({
           </div>
 
           <p><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>K</kbd> Search files</p>
-          <p><kbd>Esc</kbd> Clear search or close this dialog</p>
+          <p><kbd>Esc</kbd> Return from Source Explorer or clear search</p>
           <p><kbd>F</kbd> Fit graph to screen</p>
           <p><kbd>1</kbd> Force-directed layout</p>
           <p><kbd>2</kbd> Hierarchical layout</p>
@@ -345,13 +613,25 @@ export default function AtlasWorkspace({
         <Metric label="Files" value={analysis.stats.files} />
         <Metric label="Import edges" value={analysis.stats.edges} />
         <Metric label="Functions" value={analysis.stats.functions} />
-        <Metric label="External packages" value={analysis.stats.externalDependencies} />
-        <Metric label="Circular groups" value={analysis.cycles.cycles.length} />
-        <Metric label="Orphan files" value={analysis.stats.orphanFiles} />
+        <Metric
+          label="External packages"
+          value={analysis.stats.externalDependencies}
+        />
+        <Metric
+          label="Circular groups"
+          value={analysis.cycles.cycles.length}
+        />
+        <Metric
+          label="Orphan files"
+          value={analysis.stats.orphanFiles}
+        />
       </section>
 
       {(analysis.loaded.warnings?.length ?? 0) > 0 && (
-        <section className="aa-warning-stack" aria-label="Analysis warnings">
+        <section
+          className="aa-warning-stack"
+          aria-label="Analysis warnings"
+        >
           {analysis.loaded.warnings.map((warning, index) => (
             <p key={`${index}-${warning}`}>{warning}</p>
           ))}
@@ -399,7 +679,10 @@ export default function AtlasWorkspace({
         </label>
 
         <div className="aa-search-wrap">
-          <label className="aa-visually-hidden" htmlFor="aa-file-search">
+          <label
+            className="aa-visually-hidden"
+            htmlFor="aa-file-search"
+          >
             Search repository files
           </label>
 
@@ -492,21 +775,40 @@ export default function AtlasWorkspace({
               <ul className="aa-file-list">
                 {filteredFiles.slice(0, 500).map((file) => (
                   <li key={file.path}>
-                    <button
-                      type="button"
-                      className={
-                        file.path === selectedPath
-                          ? "aa-file-active"
-                          : ""
-                      }
-                      onClick={() => selectFile(file.path)}
-                    >
-                      <span
-                        className={`aa-file-status aa-file-${file.parseStatus}`}
-                        aria-hidden="true"
-                      />
-                      <span>{file.path}</span>
-                    </button>
+                    <div className="aa-file-row">
+                      <button
+                        type="button"
+                        className={`aa-file-select ${
+                          file.path === selectedPath
+                            ? "aa-file-active"
+                            : ""
+                        }`}
+                        onClick={() => selectFile(file.path)}
+                        title={`Focus ${file.path} in the graph`}
+                        aria-current={
+                          file.path === selectedPath
+                            ? "true"
+                            : undefined
+                        }
+                      >
+                        <span
+                          className={`aa-file-status aa-file-${file.parseStatus}`}
+                          aria-hidden="true"
+                        />
+
+                        <span>{file.path}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="aa-file-open-source"
+                        onClick={() => openSource(file.path, 1)}
+                        aria-label={`Open source for ${file.path}`}
+                        title={`Open source for ${file.path}`}
+                      >
+                        {"</>"}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -514,8 +816,8 @@ export default function AtlasWorkspace({
 
             {filteredFiles.length > 500 && (
               <p className="aa-muted-text">
-                Showing the first 500 matching entries. Refine the search
-                to narrow the list.
+                Showing the first 500 matches. Refine the search to narrow
+                the list.
               </p>
             )}
           </section>
@@ -525,6 +827,7 @@ export default function AtlasWorkspace({
           <div className="aa-panel-topline">
             <div>
               <p className="aa-eyebrow">DEPENDENCY CONSTELLATION</p>
+
               <h2>
                 {view === "calls"
                   ? "Function call graph"
@@ -532,7 +835,10 @@ export default function AtlasWorkspace({
               </h2>
             </div>
 
-            <div className="aa-graph-legend" aria-label="Graph legend">
+            <div
+              className="aa-graph-legend"
+              aria-label="Graph legend"
+            >
               <span><i className="aa-legend-dot aa-legend-folder" /> Folder cluster</span>
               <span><i className="aa-legend-dot aa-legend-cycle" /> Circular path</span>
               <span><i className="aa-legend-dot aa-legend-impact" /> Blast radius</span>
@@ -557,7 +863,7 @@ export default function AtlasWorkspace({
 
           <div className="aa-graph-footer">
             <span>
-              Call edges: {analysis.callResolution.stats.resolved} resolved ·{" "}
+              Calls: {analysis.callResolution.stats.resolved} resolved ·{" "}
               {analysis.callResolution.stats.ambiguous} ambiguous ·{" "}
               {analysis.callResolution.stats.unresolved} unresolved
             </span>
@@ -570,13 +876,12 @@ export default function AtlasWorkspace({
 
         <CodePanel
           file={selectedFile}
-          source={source}
-          loading={sourceLoading}
-          sourceError={sourceError}
-          importEdges={imports}
-          importedByEdges={importedBy}
+          importEdges={selectedImports}
+          importedByEdges={selectedImportedBy}
           functions={selectedFunctions}
           onNavigate={selectFile}
+          onOpenSource={openSource}
+          onFocusRelated={focusRelated}
         />
       </div>
 
@@ -631,11 +936,6 @@ export default function AtlasWorkspace({
           </strong>
         </div>
 
-        <div className="aa-benchmark-metric">
-          <span>Functions</span>
-          <strong>{analysis.stats.functions}</strong>
-        </div>
-
         <button
           type="button"
           className="aa-button aa-button-secondary"
@@ -646,9 +946,36 @@ export default function AtlasWorkspace({
       </section>
 
       <footer className="aa-workspace-footer">
-        Astral Atlas · Webster 2026 · Problem 06
-        <span>Source text stays in the browser during analysis.</span>
+        <span>Astral Atlas · Browser-first repository intelligence</span>
+        <span>Source files are analysed in your browser.</span>
       </footer>
+
+      {sourceScreenOpen && (
+        <Suspense
+          fallback={
+            <section
+              className="aa-source-screen aa-source-opening"
+              role="status"
+            >
+              <p className="aa-eyebrow">SOURCE EXPLORER</p>
+              <h1>Opening the file…</h1>
+              <p>Preparing the full-screen source view.</p>
+            </section>
+          }
+        >
+          <SourceExplorer
+            model={selectedSourceModel}
+            source={source}
+            loading={sourceLoading}
+            sourceError={sourceError}
+            initialLine={jumpToLine}
+            onBack={handleSourceBack}
+            onNavigate={(path) => openSource(path, 1)}
+            onJumpToLine={setJumpToLine}
+            onRetry={handleSourceRetry}
+          />
+        </Suspense>
+      )}
     </main>
   );
 }

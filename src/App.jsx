@@ -1,13 +1,16 @@
 /**
- * Astral Atlas application entry component.
+ * Astral Atlas application entry.
  *
- * WHY:
- * - AppController owns analysis orchestration.
- * - React displays the controller's current state.
- * - Repository code is processed in the browser's parser workers.
+ * The landing page is the initial experience.
+ * Repository analysis is coordinated by AppController.
+ * The graph workspace is lazy-loaded after repository analysis completes.
+ *
+ * Product branding is kept independent of hackathon/event labels.
  */
 
 import React, {
+  lazy,
+  Suspense,
   useEffect,
   useRef,
   useState
@@ -17,11 +20,14 @@ import AppController from "./engine/AppController.js";
 
 import Starfield from "./components/Starfield.jsx";
 import AnalysisProgress from "./components/AnalysisProgress.jsx";
-import AtlasWorkspace from "./components/AtlasWorkspace.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
 
 import "./styles/landing.css";
 import "./styles/atlas.css";
+
+const AtlasWorkspace = lazy(
+  () => import("./components/AtlasWorkspace.jsx")
+);
 
 const INITIAL_STATE = {
   phase: "idle",
@@ -46,19 +52,22 @@ const SAMPLE_REPOSITORIES = [
     owner: "sindresorhus",
     repo: "p-limit",
     size: "Small",
-    description: "A compact utility for limiting concurrent promise execution."
+    description:
+      "A compact utility for limiting concurrent promise execution."
   },
   {
     owner: "expressjs",
     repo: "express",
     size: "Medium",
-    description: "A widely used web framework with meaningful module relationships."
+    description:
+      "A widely used web framework with meaningful module relationships."
   },
   {
     owner: "axios",
     repo: "axios",
     size: "Medium",
-    description: "An HTTP client with adapters, utilities, and a modular source tree."
+    description:
+      "An HTTP client with adapters, utilities, and a modular source tree."
   }
 ];
 
@@ -78,6 +87,25 @@ function makeGitHubUrl(value) {
   }
 
   return trimmed;
+}
+
+function WorkspaceLoading() {
+  return (
+    <main className="aa-workspace-opening" role="status">
+      <span
+        className="aa-workspace-opening-mark"
+        aria-hidden="true"
+      >
+        ✳
+      </span>
+
+      <p className="aa-eyebrow">ASTRAL ATLAS</p>
+
+      <h1>Preparing your atlas.</h1>
+
+      <p>Loading the interactive graph workspace.</p>
+    </main>
+  );
 }
 
 function AppContent() {
@@ -103,7 +131,7 @@ function AppContent() {
 
     controllerRef.current = controller;
 
-    // Share links use ?repo=owner/repository.
+    // Automatically analyse a repository supplied through ?repo=owner/name.
     const params = new URLSearchParams(window.location.search);
     const sharedRepo = params.get("repo");
 
@@ -112,11 +140,9 @@ function AppContent() {
 
       setRepositoryInput(url);
 
-      void controller
-        .analyzeGitHub(url)
-        .catch(() => {
-          // AppController publishes a user-facing error state.
-        });
+      void controller.analyzeGitHub(url).catch(() => {
+        // AppController publishes the user-facing error state.
+      });
     }
 
     return () => {
@@ -132,7 +158,7 @@ function AppContent() {
   async function startGitHubAnalysis(value = repositoryInput) {
     const controller = controllerRef.current;
 
-    if (!controller || state.isRunning) {
+    if (!controller || controller.getState().isRunning) {
       return;
     }
 
@@ -146,22 +172,23 @@ function AppContent() {
         token: tokenInput
       });
     } catch {
-      // The controller publishes the actual error. Catching here prevents
-      // an unhandled promise rejection from a button event handler.
+      // AppController publishes the actual error to the interface.
     }
   }
 
   async function startZipAnalysis(file) {
-    if (!file || !controllerRef.current || state.isRunning) {
+    const controller = controllerRef.current;
+
+    if (!file || !controller || controller.getState().isRunning) {
       return;
     }
 
     setAnnouncement(`Preparing ${file.name}.`);
 
     try {
-      await controllerRef.current.analyzeZip(file);
+      await controller.analyzeZip(file);
     } catch {
-      // The controller publishes a friendly error in its state.
+      // AppController publishes the actual error to the interface.
     }
   }
 
@@ -169,7 +196,9 @@ function AppContent() {
     event.preventDefault();
 
     if (!repositoryInput.trim()) {
-      setAnnouncement("Enter a public GitHub repository URL first.");
+      setAnnouncement(
+        "Enter a public GitHub repository URL first."
+      );
       return;
     }
 
@@ -183,7 +212,7 @@ function AppContent() {
       void startZipAnalysis(file);
     }
 
-    // Allows the user to choose the same ZIP again after a failed attempt.
+    // Allow the same archive to be selected again after a failed attempt.
     event.target.value = "";
   }
 
@@ -207,6 +236,7 @@ function AppContent() {
 
   function returnHome() {
     controllerRef.current?.reset();
+
     setRepositoryInput("");
     setTokenInput("");
     setAnnouncement("Ready for another repository.");
@@ -235,11 +265,13 @@ function AppContent() {
   if (state.phase === "complete" && state.result) {
     return (
       <div className="aa-app-root">
-        <AtlasWorkspace
-          analysis={state.result}
-          controller={controllerRef.current}
-          onBack={returnHome}
-        />
+        <Suspense fallback={<WorkspaceLoading />}>
+          <AtlasWorkspace
+            analysis={state.result}
+            controller={controllerRef.current}
+            onBack={returnHome}
+          />
+        </Suspense>
       </div>
     );
   }
@@ -256,11 +288,15 @@ function AppContent() {
           href="#top"
           aria-label="Astral Atlas home"
         >
-          <div className="aa-brand-mark" aria-hidden="true">✳</div>
+          <div className="aa-brand-mark" aria-hidden="true">
+            ✳
+          </div>
+
           <div>
             <strong>
               Astral <span>Atlas</span>
             </strong>
+
             <span>Repository cartography</span>
           </div>
         </a>
@@ -274,11 +310,6 @@ function AppContent() {
 
       <main id="top" className="aa-landing-content">
         <div className="aa-hero">
-          <div className="aa-hero-kicker">
-            <span className="aa-live-dot" />
-            WEBSTER 2026 / PROBLEM 06
-          </div>
-
           <h1>
             Navigate the architecture
             <span> hidden in your code.</span>
@@ -287,11 +318,14 @@ function AppContent() {
           <p className="aa-hero-description">
             Turn an unfamiliar JavaScript or TypeScript repository into
             an interactive map of its modules, functions, dependencies,
-            and circular paths.
+            and hidden circular paths.
           </p>
 
           {state.error && (
-            <div className="aa-inline-error aa-landing-error" role="alert">
+            <div
+              className="aa-inline-error aa-landing-error"
+              role="alert"
+            >
               <strong>
                 {state.error.code === "GITHUB_RATE_LIMITED"
                   ? "GitHub access was restricted"
@@ -304,21 +338,27 @@ function AppContent() {
 
               {state.error.code === "GITHUB_RATE_LIMITED" && (
                 <p>
-                  Try again later, configure Atlas Edge, or use an
-                  optional GitHub token in the field below. You can
-                  also upload a ZIP archive instead.
+                  Try again later, configure Atlas Edge, or use an optional
+                  GitHub token in the field below. You can also upload a
+                  ZIP archive instead.
                 </p>
               )}
             </div>
           )}
 
-          <section className="aa-input-card" aria-label="Choose a repository">
+          <section
+            className="aa-input-card"
+            aria-label="Choose a repository"
+          >
             <div className="aa-input-heading">
               <strong>Plot your first repository</strong>
               <span>JavaScript / TypeScript</span>
             </div>
 
-            <form className="aa-repository-form" onSubmit={handleSubmit}>
+            <form
+              className="aa-repository-form"
+              onSubmit={handleSubmit}
+            >
               <label
                 className="aa-visually-hidden"
                 htmlFor="aa-repository-url"
@@ -353,7 +393,9 @@ function AppContent() {
             </form>
 
             <details className="aa-token-details">
-              <summary>Rate-limit fallback: optional GitHub token</summary>
+              <summary>
+                Rate-limit fallback: optional GitHub token
+              </summary>
 
               <label htmlFor="aa-github-token">
                 Personal access token (kept in memory only)
@@ -363,27 +405,34 @@ function AppContent() {
                 id="aa-github-token"
                 type="password"
                 value={tokenInput}
-                onChange={(event) => setTokenInput(event.target.value)}
+                onChange={(event) =>
+                  setTokenInput(event.target.value)
+                }
                 autoComplete="off"
                 spellCheck="false"
                 placeholder="Paste a token only if needed"
               />
 
               <p>
-                The token is not written to local storage or the repository.
+                The token isn't written to local storage or the repository.
                 Use the minimum access required for public repository
                 reading. Never paste a token into a repository URL.
               </p>
             </details>
 
             <div
-              className={`aa-dropzone ${dragActive ? "aa-dropzone-active" : ""}`}
+              className={`aa-dropzone ${
+                dragActive ? "aa-dropzone-active" : ""
+              }`}
               role="button"
               tabIndex={0}
               aria-label="Select a ZIP archive"
               onClick={() => zipInputRef.current?.click()}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
+                if (
+                  event.key === "Enter" ||
+                  event.key === " "
+                ) {
                   event.preventDefault();
                   zipInputRef.current?.click();
                 }
@@ -397,16 +446,24 @@ function AppContent() {
                 setDragActive(true);
               }}
               onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) {
+                if (
+                  !event.currentTarget.contains(event.relatedTarget)
+                ) {
                   setDragActive(false);
                 }
               }}
               onDrop={handleDrop}
             >
-              <span className="aa-dropzone-icon" aria-hidden="true">⇧</span>
+              <span className="aa-dropzone-icon" aria-hidden="true">
+                ⇧
+              </span>
+
               <span>
                 <strong>Or drop a ZIP archive here</strong>
-                <small>Up to 50 MB compressed · analysis stays in your browser</small>
+
+                <small>
+                  Up to 50 MB compressed · analysis stays in your browser
+                </small>
               </span>
 
               <input
@@ -420,9 +477,9 @@ function AppContent() {
 
             <p className="aa-privacy-note" id="privacy">
               <span aria-hidden="true">◈</span>
-              Your source code is fetched and parsed in your browser. Atlas
-              Edge relays limited metadata requests only; it does not relay
-              source files.
+              Your source code is fetched and parsed in your browser.
+              Atlas Edge relays limited metadata requests only; it doesn't
+              relay source files.
             </p>
           </section>
         </div>
@@ -430,7 +487,10 @@ function AppContent() {
         <section className="aa-samples-section">
           <div className="aa-section-heading">
             <div>
-              <p className="aa-eyebrow">START WITH A KNOWN REPOSITORY</p>
+              <p className="aa-eyebrow">
+                START WITH A KNOWN REPOSITORY
+              </p>
+
               <h2>Choose a starting constellation.</h2>
             </div>
 
@@ -476,11 +536,15 @@ function AppContent() {
           id="how-it-works"
         >
           <div className="aa-how-heading">
-            <p className="aa-eyebrow">FROM CODEBASE TO CONSTELLATION</p>
+            <p className="aa-eyebrow">
+              FROM CODEBASE TO CONSTELLATION
+            </p>
+
             <h2>Every repository has a shape.</h2>
+
             <p>
-              Understand an unfamiliar project before deciding where to
-              change it.
+              Understand an unfamiliar project before deciding where
+              to change it.
             </p>
           </div>
 
@@ -499,7 +563,7 @@ function AppContent() {
               <h3>Trace its architecture</h3>
               <p>
                 Extract source structure, dependencies, functions, and
-                code-health signals without blocking the interface.
+                code-health signals in your browser.
               </p>
             </article>
 
@@ -515,21 +579,27 @@ function AppContent() {
         </section>
 
         <section className="aa-privacy-section">
-          <span className="aa-privacy-seal" aria-hidden="true">◈</span>
+          <span className="aa-privacy-seal" aria-hidden="true">
+            ◈
+          </span>
+
           <div>
             <h2>Built for curious engineers.</h2>
+
             <p>
               The source parser operates in browser workers. The optional
-              Edge service relays selected GitHub metadata requests; it is
-              not a source-code upload service.
+              Edge service relays selected GitHub metadata requests; it
+              isn't a source-code upload service.
             </p>
           </div>
         </section>
       </main>
 
       <footer className="aa-landing-footer">
-        <span>Astral Atlas · Webster 2026 · Problem 06</span>
-        <span>Mapping dependencies, not sending source code to an AI service.</span>
+        <span>Astral Atlas · Browser-first repository intelligence</span>
+        <span>
+          Mapping dependencies, not sending source code to an AI service.
+        </span>
       </footer>
 
       <p

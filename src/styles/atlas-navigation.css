@@ -1,0 +1,104 @@
+/*
+ * Astral Atlas — distinct graph and source navigation controls.
+ * This stylesheet supplements the existing workspace layout.
+ */
+
+.aa-file-row {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.aa-file-row > .aa-file-select {
+  width: auto;
+  min-width: 0;
+  min-height: 34px;
+  flex: 1 1 auto;
+  align-items: flex-start;
+  overflow: hidden;
+}
+
+.aa-file-row > .aa-file-select > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.aa-file-row > .aa-file-open-source {
+  display: inline-flex;
+  width: 36px;
+  min-width: 36px;
+  min-height: 34px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  border: 1px solid var(--aa-border, #28574f);
+  border-radius: 5px;
+  background: var(--aa-raised, #12544f);
+  color: var(--aa-copper, #8bbb92);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.aa-file-row > .aa-file-open-source:hover {
+  border-color: var(--aa-ember, #66bb6a);
+  background: var(--aa-panel, #0d3434);
+  color: var(--aa-parchment, #e8f5e9);
+}
+
+.aa-file-row > .aa-file-open-source:focus-visible {
+  outline: 2px solid var(--aa-ember, #66bb6a);
+  outline-offset: 2px;
+}
+
+.aa-file-row > .aa-file-select[aria-current="true"] {
+  border-color: var(--aa-copper, #8bbb92);
+}
+
+.aa-file-inspector-actions {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--aa-border, #28574f);
+}
+
+.aa-file-inspector-actions > .aa-button {
+  width: 100%;
+  min-height: 39px;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 10px;
+}
+
+.aa-file-inspector-actions > .aa-button > span {
+  flex: 0 0 auto;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.aa-file-inspector-hint {
+  margin: 0;
+  padding: 12px 14px 16px;
+  color: var(--aa-muted, #a5d6a7);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+@media (max-width: 950px) {
+  .aa-file-row > .aa-file-select {
+    min-height: 38px;
+  }
+
+  .aa-file-row > .aa-file-open-source {
+    width: 40px;
+    min-width: 40px;
+    min-height: 38px;
+    flex-basis: 40px;
+  }
+
+  .aa-file-inspector-actions > .aa-button {
+    min-height: 42px;
+  }
+}
