@@ -175,17 +175,29 @@ export function filterSourceTree(
   const skippedByReason = Object.create(null);
   const candidates = [];
 
-  const addSkipped = (reason) => {
+  const addSkipped = (reason, count = 1) => {
+    if (!Number.isFinite(count) || count <= 0) {
+      return;
+    }
+
     skippedByReason[reason] =
-      (skippedByReason[reason] ?? 0) + 1;
+      (skippedByReason[reason] ?? 0) + Math.floor(count);
   };
 
   const normalizedSubpath = normalizeRepoPath(subpath);
 
   for (const entry of Array.isArray(tree) ? tree : []) {
     // Git trees include directories, submodules, and sometimes symlinks.
-    // Only regular file blobs are useful input for the JS/TS parser.
-    if (entry.type !== "blob" || entry.mode === "120000") {
+    // Directory/submodule records are not source-file paths for this count.
+    if (entry.type !== "blob") {
+      continue;
+    }
+
+    // Git mode 120000 identifies a symlink blob. It is deliberately not
+    // followed, but it is still an omitted repository path and should be
+    // accounted for in the coverage warning.
+    if (entry.mode === "120000") {
+      addSkipped("symlink");
       continue;
     }
 
@@ -224,10 +236,13 @@ export function filterSourceTree(
   }
 
   const capApplied = candidates.length > maxFiles;
+  const omittedByCap = Math.max(0, candidates.length - maxFiles);
   const files = candidates.slice(0, maxFiles);
 
-  if (capApplied) {
-    addSkipped("file-cap");
+  // Count every candidate excluded by the cap, not just the fact that the
+  // cap was triggered. This keeps skippedCount and the UI warning accurate.
+  if (omittedByCap > 0) {
+    addSkipped("file-cap", omittedByCap);
   }
 
   return {

@@ -1,0 +1,492 @@
+/*
+ * Astral Atlas — graph layout, navigation and expanded canvas.
+ *
+ * Normal mode:
+ * - The graph remains inside the central workspace column.
+ * - The file index and inspector scroll independently.
+ *
+ * Expanded mode:
+ * - The graph shell becomes a viewport-sized overlay.
+ * - All Cytoscape navigation controls stay available.
+ * - Closing the view returns to the existing repository workspace.
+ */
+
+/* ---------------------------------------------------------
+   Stable three-column workspace
+   --------------------------------------------------------- */
+
+.aa-workspace .aa-workspace-grid {
+  height: clamp(420px, calc(100dvh - 330px), 720px);
+  min-height: 420px;
+  max-height: 720px;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.aa-workspace .aa-workspace-grid > .aa-insights-panel,
+.aa-workspace .aa-workspace-grid > .aa-code-panel {
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.aa-workspace .aa-workspace-grid > .aa-atlas-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.aa-workspace .aa-atlas-panel > .aa-panel-topline {
+  flex: 0 0 auto;
+}
+
+.aa-workspace .aa-atlas-panel > .aa-graph-shell.aa-graph-ux {
+  position: relative;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* The canvas must occupy the actual graph shell dimensions. */
+.aa-workspace .aa-graph-ux > .aa-graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------
+   Graph instructions and status
+   --------------------------------------------------------- */
+
+.aa-workspace .aa-graph-ux > .aa-graph-onboarding {
+  position: absolute;
+  z-index: 3;
+  top: 50px;
+  left: 12px;
+  display: grid;
+  width: min(290px, calc(100% - 24px));
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--aa-border);
+  border-radius: 10px;
+  background: rgb(18 22 34 / 0.96);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.aa-workspace .aa-graph-onboarding strong {
+  color: var(--aa-amethyst);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.aa-workspace .aa-graph-onboarding span {
+  color: var(--aa-muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.aa-workspace .aa-graph-ux > .aa-graph-overlay-top {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  max-width: calc(100% - 340px);
+  pointer-events: none;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-status {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 6px 9px;
+  border: 1px solid var(--aa-border);
+  border-radius: 7px;
+  background: rgb(18 22 34 / 0.96);
+  color: var(--aa-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------
+   Floating graph navigation controls
+   --------------------------------------------------------- */
+
+.aa-workspace .aa-graph-ux > .aa-graph-controls {
+  position: absolute;
+  z-index: 6;
+  top: 12px;
+  right: 12px;
+  bottom: auto;
+  left: auto;
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+  max-width: calc(100% - 24px);
+  padding: 8px;
+  border: 1px solid var(--aa-border);
+  border-radius: 10px;
+  background: rgb(18 22 34 / 0.96);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.24);
+  backdrop-filter: blur(12px);
+}
+
+.aa-workspace .aa-graph-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls button {
+  display: inline-flex;
+  min-width: 38px;
+  min-height: 35px;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 10px;
+  border: 1px solid var(--aa-border);
+  border-radius: 7px;
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+  font-family: "Manrope", sans-serif;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls button:hover {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.13);
+  color: #e5dcff;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls button:focus-visible {
+  outline: 2px solid var(--aa-amethyst);
+  outline-offset: 3px;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls .aa-graph-fit-button {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.12);
+  color: #e5dcff;
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls .aa-graph-expand-button {
+  border-color: var(--aa-copper);
+  color: var(--aa-copper);
+}
+
+.aa-workspace .aa-graph-ux .aa-graph-controls .aa-graph-expand-button:hover {
+  border-color: var(--aa-copper);
+  background: rgb(103 232 249 / 0.1);
+  color: var(--aa-parchment);
+}
+
+/* ---------------------------------------------------------
+   Heatmap and tooltip surfaces
+   --------------------------------------------------------- */
+
+.aa-workspace .aa-graph-ux > .aa-heatmap-legend {
+  position: absolute;
+  z-index: 4;
+  top: 122px;
+  left: 12px;
+  width: min(230px, calc(100% - 24px));
+  max-height: 45%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--aa-border);
+  border-radius: 10px;
+  background: rgb(18 22 34 / 0.98);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.3);
+  backdrop-filter: blur(12px);
+}
+
+.aa-workspace .aa-graph-ux > .aa-heatmap-legend > strong {
+  color: var(--aa-amethyst);
+}
+
+.aa-workspace .aa-graph-ux > .aa-node-tooltip {
+  position: absolute;
+  z-index: 8;
+  max-width: min(280px, calc(100% - 16px));
+  border: 1px solid var(--aa-border);
+  border-radius: 9px;
+  background: rgb(18 22 34 / 0.98);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.34);
+  color: var(--aa-parchment);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------
+   Navigation instructions at the bottom of the canvas
+   --------------------------------------------------------- */
+
+.aa-workspace .aa-graph-ux > .aa-graph-help {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 8px;
+  left: 12px;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--aa-border);
+  border-radius: 7px;
+  background: rgb(18 22 34 / 0.93);
+  color: var(--aa-muted);
+  font-size: 9px;
+  line-height: 1.6;
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------
+   Expanded viewport mode
+   --------------------------------------------------------- */
+
+/*
+ * The expanded shell is fixed to the viewport, rather than merely increasing
+ * the Cytoscape zoom. It therefore gains real screen area.
+ *
+ * The extra specificity ensures this rule wins against the normal workspace
+ * flex sizing rules above.
+ */
+
+.aa-workspace .aa-workspace-grid .aa-atlas-panel >
+.aa-graph-shell.aa-graph-ux.aa-graph-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  flex: none;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--aa-border-strong);
+  border-radius: 0;
+  background-color: var(--aa-abyss);
+  box-shadow: 0 0 0 1px rgb(167 139 250 / 0.07);
+  isolation: isolate;
+}
+
+.aa-workspace .aa-graph-expanded > .aa-graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* The expanded graph has enough space for a distinct control bar. */
+.aa-workspace .aa-graph-expanded > .aa-graph-controls {
+  top: 14px;
+  right: 14px;
+  max-width: min(560px, calc(100% - 28px));
+}
+
+.aa-workspace .aa-graph-expanded > .aa-graph-overlay-top {
+  top: 14px;
+  left: 14px;
+  max-width: calc(100% - 590px);
+}
+
+.aa-workspace .aa-graph-expanded > .aa-graph-onboarding {
+  top: 62px;
+  left: 14px;
+  width: min(315px, calc(100% - 28px));
+}
+
+.aa-workspace .aa-graph-expanded > .aa-heatmap-legend {
+  top: 180px;
+  left: 14px;
+  max-height: calc(100dvh - 250px);
+}
+
+.aa-workspace .aa-graph-expanded > .aa-graph-help {
+  right: 14px;
+  bottom: 12px;
+  left: 14px;
+  max-width: calc(100% - 28px);
+  padding: 10px 12px;
+}
+
+/* ---------------------------------------------------------
+   Tablet and phone layouts
+   --------------------------------------------------------- */
+
+@media (max-width: 1050px) {
+  .aa-workspace .aa-workspace-grid {
+    height: clamp(420px, calc(100dvh - 320px), 660px);
+    min-height: 420px;
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-onboarding {
+    width: min(260px, calc(100% - 24px));
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-overlay-top {
+    max-width: calc(100% - 300px);
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-heatmap-legend {
+    top: 115px;
+  }
+}
+
+@media (max-width: 760px) {
+  .aa-workspace .aa-workspace-grid {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .aa-workspace .aa-workspace-grid > .aa-insights-panel,
+  .aa-workspace .aa-workspace-grid > .aa-code-panel {
+    height: auto;
+    max-height: 42vh;
+    overflow-y: auto;
+  }
+
+  .aa-workspace .aa-workspace-grid > .aa-atlas-panel {
+    height: auto;
+    max-height: none;
+    min-height: 540px;
+    overflow: hidden;
+  }
+
+  .aa-workspace .aa-atlas-panel > .aa-graph-shell.aa-graph-ux {
+    height: 480px;
+    min-height: 480px;
+    flex: 0 0 480px;
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-onboarding {
+    top: 58px;
+    left: 10px;
+    width: min(205px, calc(100% - 20px));
+    padding: 10px;
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-controls {
+    top: auto;
+    right: 10px;
+    bottom: 42px;
+    max-width: calc(100% - 20px);
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-overlay-top {
+    top: 10px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-heatmap-legend {
+    top: auto;
+    bottom: 100px;
+    left: 10px;
+    width: min(210px, calc(100% - 20px));
+    max-height: 34%;
+  }
+
+  .aa-workspace .aa-graph-ux > .aa-graph-help {
+    right: 8px;
+    bottom: 7px;
+    left: 8px;
+    max-width: calc(100% - 16px);
+  }
+
+  /* Expanded mode overrides normal mobile fixed-height graph rules. */
+  .aa-workspace .aa-workspace-grid .aa-atlas-panel >
+  .aa-graph-shell.aa-graph-ux.aa-graph-expanded {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    max-height: none;
+    flex: none;
+    border-radius: 0;
+  }
+
+  .aa-workspace .aa-graph-expanded > .aa-graph-controls {
+    top: 10px;
+    right: 10px;
+    bottom: auto;
+    max-width: calc(100% - 20px);
+  }
+
+  .aa-workspace .aa-graph-expanded > .aa-graph-overlay-top {
+    top: 10px;
+    left: 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .aa-workspace .aa-graph-expanded > .aa-graph-onboarding {
+    top: 62px;
+    left: 10px;
+    width: min(190px, calc(100% - 20px));
+  }
+
+  .aa-workspace .aa-graph-expanded > .aa-heatmap-legend {
+    top: auto;
+    bottom: 98px;
+    left: 10px;
+    width: min(205px, calc(100% - 20px));
+    max-height: 34%;
+  }
+
+  .aa-workspace .aa-graph-expanded > .aa-graph-help {
+    right: 8px;
+    bottom: 7px;
+    left: 8px;
+    max-width: calc(100% - 16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aa-graph-ux *,
+  .aa-graph-ux *::before,
+  .aa-graph-ux *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

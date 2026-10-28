@@ -1,0 +1,939 @@
+/*
+ * Astral Atlas — Graphite / Electric Violet design system.
+ *
+ * Direction:
+ * - Near-black ink and layered graphite surfaces.
+ * - Violet is the primary interactive accent.
+ * - Cyan communicates relationships and supporting information.
+ * - Coral is reserved for cycles, parsing failures and other errors.
+ * - Semantic success colour appears only where it conveys actual status.
+ *
+ * This file loads after palette-overrides.css intentionally.
+ * It changes visual tokens and presentation without changing application logic.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Core surfaces */
+  --aa-abyss: #0b0d12;
+  --aa-panel: #121622;
+  --aa-raised: #1b2030;
+  --aa-raised-hover: #242a3d;
+  --aa-border: #30384e;
+  --aa-border-strong: #48536c;
+
+  /* Text */
+  --aa-parchment: #f1f2fa;
+  --aa-muted: #b7bed0;
+  --aa-subtle: #8b93aa;
+
+  /* Legacy aliases retained for existing component styles */
+  --aa-ember: #a78bfa;
+  --aa-copper: #67e8f9;
+  --aa-amethyst: #a78bfa;
+  --aa-rose: #f472b6;
+  --aa-plum: #29213f;
+  --aa-forest: #8b5cf6;
+
+  /* Semantic states */
+  --aa-success: #34d399;
+  --aa-warning: #fbbf24;
+  --aa-error: #fb7185;
+  --aa-info: #67e8f9;
+  --aa-danger-bg: #321923;
+  --aa-warning-bg: #2b2238;
+  --aa-code-bg: #0a0c12;
+
+  /* Compatibility with the original design tokens */
+  --color-abyss: #0b0d12;
+  --color-panel: #121622;
+  --color-raised: #1b2030;
+  --color-raised-hover: #242a3d;
+  --color-border: #30384e;
+  --color-border-strong: #48536c;
+
+  --color-parchment: #f1f2fa;
+  --color-muted: #b7bed0;
+  --color-subtle: #8b93aa;
+
+  --color-ember: #a78bfa;
+  --color-copper: #67e8f9;
+  --color-amethyst: #a78bfa;
+  --color-rose: #f472b6;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #fb7185;
+  --color-info: #67e8f9;
+
+  /* Distinguishable folder palette */
+  --cluster-01: #a78bfa;
+  --cluster-02: #67e8f9;
+  --cluster-03: #f472b6;
+  --cluster-04: #fb7185;
+  --cluster-05: #818cf8;
+  --cluster-06: #c4b5fd;
+  --cluster-07: #f0abfc;
+  --cluster-08: #60a5fa;
+  --cluster-09: #2dd4bf;
+  --cluster-10: #fdba74;
+  --cluster-11: #d8b4fe;
+  --cluster-12: #f9a8d4;
+
+  /* Shape, spacing and elevation */
+  --aa-radius-sm: 7px;
+  --aa-radius-md: 11px;
+  --aa-radius-lg: 16px;
+
+  --aa-shadow:
+    0 18px 48px rgb(0 0 0 / 0.34);
+
+  --aa-shadow-accent:
+    0 0 0 1px rgb(167 139 250 / 0.16),
+    0 14px 42px rgb(0 0 0 / 0.3);
+}
+
+/* ---------------------------------------------------------
+   Application foundations
+   --------------------------------------------------------- */
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+html {
+  scrollbar-color: var(--aa-border-strong) var(--aa-abyss);
+}
+
+body {
+  margin: 0;
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+  font-family: "Manrope", sans-serif;
+}
+
+::selection {
+  background: rgb(167 139 250 / 0.32);
+  color: var(--aa-parchment);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.aa-app-root {
+  min-height: 100%;
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-app-root :focus-visible {
+  outline: 2px solid var(--aa-amethyst);
+  outline-offset: 3px;
+}
+
+.aa-app-root :disabled {
+  cursor: not-allowed;
+}
+
+.aa-app-root * {
+  scrollbar-color: var(--aa-border-strong) var(--aa-panel);
+}
+
+.aa-app-root ::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+.aa-app-root ::-webkit-scrollbar-track {
+  background: var(--aa-panel);
+}
+
+.aa-app-root ::-webkit-scrollbar-thumb {
+  border: 2px solid var(--aa-panel);
+  border-radius: 20px;
+  background: var(--aa-border-strong);
+}
+
+.aa-app-root ::-webkit-scrollbar-thumb:hover {
+  background: var(--aa-subtle);
+}
+
+/* Display typography retains the existing locally hosted fonts. */
+
+.aa-app-root h1,
+.aa-app-root h2,
+.aa-app-root h3,
+.aa-app-root .aa-brand strong,
+.aa-app-root .aa-summary-metric strong,
+.aa-app-root .aa-code-metrics strong,
+.aa-app-root .aa-benchmark-metric strong {
+  text-wrap: balance;
+}
+
+.aa-app-root .aa-eyebrow {
+  color: var(--aa-copper);
+}
+
+/* ---------------------------------------------------------
+   Landing page
+   --------------------------------------------------------- */
+
+.aa-landing-page {
+  background:
+    radial-gradient(
+      ellipse at 52% 16%,
+      rgb(139 92 246 / 0.19),
+      transparent 45%
+    ),
+    radial-gradient(
+      ellipse at 12% 76%,
+      rgb(103 232 249 / 0.075),
+      transparent 37%
+    ),
+    var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-landing-header {
+  border-color: var(--aa-border);
+  background: rgb(11 13 18 / 0.82);
+  backdrop-filter: blur(18px);
+}
+
+.aa-brand-mark {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.08);
+  color: var(--aa-amethyst);
+  box-shadow:
+    inset 0 0 22px rgb(167 139 250 / 0.08),
+    0 0 24px rgb(167 139 250 / 0.06);
+}
+
+.aa-brand strong span,
+.aa-hero h1 span,
+.aa-sample-title span {
+  color: var(--aa-amethyst);
+}
+
+.aa-hero-kicker {
+  border-color: rgb(167 139 250 / 0.48);
+  background: rgb(167 139 250 / 0.09);
+  color: #d3c4ff;
+}
+
+.aa-live-dot {
+  background: var(--aa-copper);
+  box-shadow: 0 0 12px rgb(103 232 249 / 0.48);
+}
+
+.aa-hero-description,
+.aa-privacy-note,
+.aa-sample-description,
+.aa-section-heading > span,
+.aa-how-heading > p:last-child {
+  color: var(--aa-muted);
+}
+
+.aa-input-card {
+  border-color: rgb(167 139 250 / 0.38);
+  background:
+    linear-gradient(
+      138deg,
+      rgb(167 139 250 / 0.11),
+      rgb(18 22 34 / 0.96) 52%,
+      rgb(103 232 249 / 0.035)
+    );
+  box-shadow: var(--aa-shadow-accent);
+}
+
+.aa-repository-input-wrap {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-copper);
+}
+
+.aa-repository-input-wrap input,
+.aa-token-details input {
+  background: transparent;
+  color: var(--aa-parchment);
+}
+
+.aa-repository-input-wrap input::placeholder,
+.aa-token-details input::placeholder,
+.aa-search-wrap input::placeholder {
+  color: var(--aa-subtle);
+  opacity: 1;
+}
+
+.aa-token-details input {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+}
+
+.aa-dropzone {
+  border-color: var(--aa-border-strong);
+  background: rgb(18 22 34 / 0.7);
+}
+
+.aa-dropzone:hover,
+.aa-dropzone-active {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.08);
+  box-shadow: inset 0 0 24px rgb(167 139 250 / 0.035);
+}
+
+.aa-dropzone-icon {
+  border-color: var(--aa-border);
+  background: rgb(167 139 250 / 0.12);
+  color: var(--aa-amethyst);
+}
+
+.aa-sample-card,
+.aa-how-card {
+  border-color: var(--aa-border);
+  background: rgb(18 22 34 / 0.88);
+  color: var(--aa-parchment);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 0.12);
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.aa-sample-card:hover,
+.aa-how-card:hover {
+  border-color: rgb(167 139 250 / 0.55);
+  background: var(--aa-raised);
+}
+
+.aa-sample-card:hover {
+  transform: translateY(-2px);
+}
+
+.aa-sample-meta,
+.aa-how-card > span,
+.aa-browser-first {
+  color: var(--aa-copper);
+}
+
+.aa-how-section {
+  background:
+    linear-gradient(
+      180deg,
+      transparent,
+      rgb(139 92 246 / 0.055),
+      transparent
+    );
+}
+
+.aa-landing-footer {
+  border-top-color: var(--aa-border);
+  color: var(--aa-muted);
+}
+
+/* ---------------------------------------------------------
+   Buttons and form controls
+   --------------------------------------------------------- */
+
+.aa-button-primary {
+  border-color: var(--aa-amethyst);
+  background: var(--aa-amethyst);
+  color: #100c1d;
+  font-weight: 800;
+  box-shadow: 0 6px 22px rgb(139 92 246 / 0.13);
+}
+
+.aa-button-primary:hover:not(:disabled) {
+  border-color: #c4b5fd;
+  background: #c4b5fd;
+  color: #100c1d;
+}
+
+.aa-button-secondary {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+  color: var(--aa-parchment);
+}
+
+.aa-button-secondary:hover:not(:disabled) {
+  border-color: var(--aa-amethyst);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+}
+
+.aa-button:focus-visible,
+.aa-app-root button:focus-visible {
+  outline: 2px solid var(--aa-amethyst);
+  outline-offset: 3px;
+}
+
+.aa-toolbar-group select,
+.aa-search-wrap input,
+.aa-repository-input-wrap,
+.aa-token-details input {
+  border-color: var(--aa-border);
+  background-color: var(--aa-code-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-toolbar-group select:hover,
+.aa-search-wrap input:hover {
+  border-color: var(--aa-border-strong);
+}
+
+.aa-toolbar-group select:focus-visible,
+.aa-search-wrap input:focus-visible,
+.aa-repository-input-wrap:focus-within,
+.aa-token-details input:focus-visible {
+  border-color: var(--aa-amethyst);
+  outline-color: var(--aa-amethyst);
+}
+
+.aa-switch-label input {
+  accent-color: var(--aa-amethyst);
+}
+
+.aa-switch-label,
+.aa-search-wrap > span,
+.aa-control-label {
+  color: var(--aa-muted);
+}
+
+/* ---------------------------------------------------------
+   Analysis progress and alerts
+   --------------------------------------------------------- */
+
+.aa-progress-orb {
+  border-color: rgb(167 139 250 / 0.68);
+  background:
+    radial-gradient(
+      circle,
+      rgb(167 139 250 / 0.25),
+      var(--aa-abyss) 73%
+    );
+}
+
+.aa-progress-orb span {
+  background: var(--aa-amethyst);
+  box-shadow: 0 0 13px rgb(167 139 250 / 0.4);
+}
+
+.aa-timeline-step:not(:last-child)::after {
+  background: var(--aa-border);
+}
+
+.aa-step-marker {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+  color: var(--aa-muted);
+}
+
+.aa-step-complete .aa-step-marker {
+  border-color: var(--aa-success);
+  background: rgb(52 211 153 / 0.10);
+  color: var(--aa-success);
+}
+
+.aa-step-active .aa-step-marker {
+  border-color: var(--aa-amethyst);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+  box-shadow: 0 0 18px rgb(167 139 250 / 0.15);
+}
+
+.aa-step-active .aa-step-copy strong {
+  color: var(--aa-amethyst);
+}
+
+.aa-progress-track {
+  background: var(--aa-raised);
+}
+
+.aa-progress-fill {
+  background: linear-gradient(
+    90deg,
+    var(--aa-amethyst),
+    var(--aa-copper)
+  );
+}
+
+.aa-inline-error {
+  border-color: var(--aa-error);
+  background: var(--aa-danger-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-inline-warning,
+.aa-warning-stack p {
+  border-color: var(--aa-warning);
+  background: var(--aa-warning-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-fatal-error details,
+.aa-fatal-error > p:not(.aa-eyebrow) {
+  color: var(--aa-muted);
+}
+
+.aa-fatal-error pre {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-parchment);
+}
+
+/* ---------------------------------------------------------
+   Workspace background and header
+   --------------------------------------------------------- */
+
+.aa-workspace {
+  background:
+    radial-gradient(
+      ellipse at 50% 0,
+      rgb(139 92 246 / 0.075),
+      transparent 44%
+    ),
+    var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-workspace-header {
+  border-bottom-color: var(--aa-border);
+  background: rgb(11 13 18 / 0.72);
+}
+
+.aa-repo-heading > strong {
+  color: var(--aa-parchment);
+}
+
+.aa-shortcuts {
+  border-color: var(--aa-border-strong);
+  background: var(--aa-panel);
+  color: var(--aa-parchment);
+  box-shadow: var(--aa-shadow);
+}
+
+.aa-shortcuts-heading {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-shortcuts-heading button {
+  color: var(--aa-parchment);
+}
+
+.aa-shortcuts kbd {
+  border-color: var(--aa-border);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+}
+
+/* ---------------------------------------------------------
+   Summary metrics and panels
+   --------------------------------------------------------- */
+
+.aa-summary-metric,
+.aa-insights-panel,
+.aa-atlas-panel,
+.aa-code-panel,
+.aa-benchmark-panel {
+  border-color: var(--aa-border);
+  background: var(--aa-panel);
+}
+
+.aa-summary-metric,
+.aa-benchmark-metric {
+  min-width: 0;
+}
+
+.aa-summary-metric span,
+.aa-benchmark-metric span {
+  color: var(--aa-muted);
+}
+
+.aa-summary-metric strong,
+.aa-benchmark-metric strong {
+  color: var(--aa-parchment);
+}
+
+.aa-summary-metric:hover {
+  border-color: rgb(167 139 250 / 0.25);
+}
+
+.aa-warning-stack p {
+  border-color: var(--aa-warning);
+}
+
+.aa-workspace-toolbar {
+  border-color: var(--aa-border);
+  background: rgb(18 22 34 / 0.92);
+}
+
+.aa-toolbar-group select,
+.aa-search-wrap input {
+  border-color: var(--aa-border);
+  background: var(--aa-code-bg);
+  color: var(--aa-parchment);
+}
+
+.aa-search-wrap input::placeholder {
+  color: var(--aa-subtle);
+  opacity: 1;
+}
+
+.aa-insight-section {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-starter-list > li,
+.aa-cycle-list > li {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-starter-list > li > button,
+.aa-cycle-list > li > button {
+  color: var(--aa-parchment);
+}
+
+.aa-starter-list > li > button:hover,
+.aa-cycle-list > li > button:hover {
+  background: rgb(167 139 250 / 0.055);
+}
+
+.aa-starter-list > li > button > strong {
+  color: var(--aa-copper);
+}
+
+.aa-cycle-list > li > button strong {
+  color: var(--aa-error);
+}
+
+.aa-starter-list small,
+.aa-cycle-list small {
+  color: var(--aa-muted);
+}
+
+/* ---------------------------------------------------------
+   File index and inspector links
+   --------------------------------------------------------- */
+
+.aa-file-list button {
+  color: var(--aa-muted);
+}
+
+.aa-file-list button:hover {
+  border-color: var(--aa-border);
+  background: rgb(167 139 250 / 0.075);
+  color: var(--aa-parchment);
+}
+
+.aa-file-list button.aa-file-active {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.12);
+  color: var(--aa-parchment);
+}
+
+.aa-file-status {
+  background: var(--aa-copper);
+}
+
+.aa-file-error {
+  background: var(--aa-error);
+}
+
+.aa-file-recovered {
+  background: var(--aa-warning);
+}
+
+.aa-file-row > .aa-file-open-source {
+  border-color: var(--aa-border);
+  background: var(--aa-raised);
+  color: var(--aa-amethyst);
+}
+
+.aa-file-row > .aa-file-open-source:hover {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.1);
+  color: var(--aa-parchment);
+}
+
+.aa-file-row > .aa-file-select[aria-current="true"] {
+  border-color: var(--aa-amethyst);
+}
+
+/* ---------------------------------------------------------
+   Dependency graph and its navigation chrome
+   --------------------------------------------------------- */
+
+.aa-panel-topline {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-graph-legend {
+  color: var(--aa-muted);
+}
+
+.aa-legend-dot {
+  background: var(--aa-copper);
+}
+
+.aa-legend-folder {
+  background: var(--aa-amethyst);
+}
+
+.aa-legend-cycle {
+  background: var(--aa-error);
+}
+
+.aa-legend-impact {
+  background: var(--aa-rose);
+}
+
+.aa-legend-error {
+  background: #ff8b9a;
+}
+
+.aa-workspace .aa-graph-shell {
+  background:
+    radial-gradient(
+      ellipse at 52% 46%,
+      rgb(139 92 246 / 0.075),
+      transparent 58%
+    ),
+    radial-gradient(
+      rgb(108 120 157 / 0.26) 0.7px,
+      transparent 0.85px
+    );
+  background-size: auto, 24px 24px;
+  background-color: var(--aa-abyss);
+}
+
+.aa-graph-status {
+  border-color: var(--aa-border);
+  background: rgb(18 22 34 / 0.96);
+  color: var(--aa-muted);
+}
+
+.aa-graph-controls {
+  border-color: var(--aa-border);
+  background: rgb(18 22 34 / 0.94);
+}
+
+.aa-graph-controls button {
+  border-color: var(--aa-border);
+  background: var(--aa-raised);
+  color: var(--aa-parchment);
+}
+
+.aa-graph-controls button:hover {
+  border-color: var(--aa-amethyst);
+  background: rgb(167 139 250 / 0.12);
+  color: #d9ccff;
+}
+
+.aa-graph-controls button:focus-visible {
+  outline: 2px solid var(--aa-amethyst);
+  outline-offset: 2px;
+}
+
+.aa-graph-help,
+.aa-graph-footer {
+  color: var(--aa-muted);
+}
+
+.aa-graph-footer {
+  border-top-color: var(--aa-border);
+}
+
+/* Heatmap legend */
+
+.aa-heatmap-legend,
+.aa-node-tooltip {
+  border-color: var(--aa-border);
+  background: rgb(18 22 34 / 0.98);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.38);
+  color: var(--aa-parchment);
+  backdrop-filter: blur(12px);
+}
+
+.aa-heatmap-legend > strong {
+  color: var(--aa-amethyst);
+}
+
+.aa-heatmap-legend i {
+  border-color: var(--aa-border-strong);
+}
+
+.aa-heat-low-dot {
+  background: var(--aa-copper);
+}
+
+.aa-heat-medium-dot {
+  background: var(--aa-amethyst);
+}
+
+.aa-heat-high-dot {
+  background: var(--aa-error);
+}
+
+.aa-heat-unavailable-dot {
+  border-style: dashed !important;
+  background: var(--aa-raised);
+}
+
+.aa-heatmap-legend p {
+  color: var(--aa-muted);
+}
+
+.aa-node-tooltip strong {
+  color: var(--aa-parchment);
+}
+
+.aa-node-tooltip span {
+  color: var(--aa-muted);
+}
+
+/* ---------------------------------------------------------
+   Source inspector and benchmark
+   --------------------------------------------------------- */
+
+.aa-code-heading {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-code-path {
+  color: var(--aa-muted);
+}
+
+.aa-code-metrics {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-code-metrics > div {
+  border: 1px solid var(--aa-border);
+  background: var(--aa-raised);
+}
+
+.aa-code-metrics span {
+  color: var(--aa-muted);
+}
+
+.aa-code-metrics strong {
+  color: var(--aa-parchment);
+}
+
+.aa-code-section {
+  border-bottom-color: var(--aa-border);
+}
+
+.aa-link-list button,
+.aa-function-list button {
+  color: var(--aa-muted);
+}
+
+.aa-link-list button:hover,
+.aa-function-list button:hover {
+  background: rgb(167 139 250 / 0.065);
+  color: var(--aa-parchment);
+}
+
+.aa-link-list button span:last-child,
+.aa-function-meta,
+.aa-loading-indicator {
+  color: var(--aa-copper);
+}
+
+.aa-function-name {
+  color: var(--aa-parchment);
+}
+
+.aa-editor-heading {
+  border-bottom-color: var(--aa-border);
+  color: var(--aa-parchment);
+}
+
+.aa-editor-empty {
+  color: var(--aa-muted);
+}
+
+.aa-skeleton-line {
+  background: linear-gradient(
+    90deg,
+    var(--aa-raised),
+    #29233d,
+    var(--aa-raised)
+  );
+  background-size: 200% 100%;
+}
+
+.aa-benchmark-panel {
+  border-color: var(--aa-border);
+}
+
+.aa-workspace-footer {
+  color: var(--aa-muted);
+}
+
+/* Code viewer surfaces: preserve syntax token colours from CodeMirror. */
+
+.aa-source-screen,
+.aa-source-opening {
+  background: var(--aa-abyss);
+  color: var(--aa-parchment);
+}
+
+.aa-source-screen .cm-editor,
+.aa-source-screen .cm-scroller {
+  background: var(--aa-code-bg);
+}
+
+.aa-source-screen .cm-gutters {
+  border-right-color: var(--aa-border);
+  background: var(--aa-panel);
+}
+
+.aa-source-screen .cm-lineNumbers,
+.aa-source-screen .cm-gutterElement {
+  color: var(--aa-subtle);
+}
+
+/* ---------------------------------------------------------
+   Shared interaction and motion
+   --------------------------------------------------------- */
+
+.aa-app-root a {
+  text-decoration-color: rgb(103 232 249 / 0.38);
+  text-underline-offset: 3px;
+}
+
+.aa-app-root a:hover {
+  text-decoration-color: var(--aa-copper);
+}
+
+.aa-app-root button,
+.aa-app-root select,
+.aa-app-root input,
+.aa-app-root textarea {
+  accent-color: var(--aa-amethyst);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aa-app-root *,
+  .aa-app-root *::before,
+  .aa-app-root *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

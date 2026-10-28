@@ -373,9 +373,13 @@ export async function readZipArchive(file, {
   const configFiles = [];
   const candidates = [];
 
-  const skip = (reason) => {
+  const skip = (reason, count = 1) => {
+    if (!Number.isFinite(count) || count <= 0) {
+      return;
+    }
+
     skippedByReason[reason] =
-      (skippedByReason[reason] ?? 0) + 1;
+      (skippedByReason[reason] ?? 0) + Math.floor(count);
   };
 
   for (let index = 0; index < archivePaths.length; index += 1) {
@@ -446,10 +450,13 @@ export async function readZipArchive(file, {
   }
 
   const capApplied = candidates.length > maxFiles;
+  const omittedByCap = Math.max(0, candidates.length - maxFiles);
   const selected = candidates.slice(0, maxFiles);
 
-  if (capApplied) {
-    skip("file-cap");
+  // Every eligible source file omitted by the cap contributes to the
+  // skipped count, rather than counting the cap event as a single file.
+  if (omittedByCap > 0) {
+    skip("file-cap", omittedByCap);
   }
 
   const files = [];

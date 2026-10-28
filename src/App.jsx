@@ -21,9 +21,12 @@ import AppController from "./engine/AppController.js";
 import Starfield from "./components/Starfield.jsx";
 import AnalysisProgress from "./components/AnalysisProgress.jsx";
 import ErrorBoundary from "./components/ErrorBoundary.jsx";
+import LandingMotion from "./components/LandingMotion.jsx";
+import ArchitecturePreview from "./components/ArchitecturePreview.jsx";
 
 import "./styles/landing.css";
 import "./styles/atlas.css";
+import "./styles/landing-interactions.css";
 
 const AtlasWorkspace = lazy(
   () => import("./components/AtlasWorkspace.jsx")
@@ -282,6 +285,8 @@ function AppContent() {
         <Starfield />
       </div>
 
+      <LandingMotion />
+
       <header className="aa-landing-header">
         <a
           className="aa-brand"
@@ -321,6 +326,17 @@ function AppContent() {
             and hidden circular paths.
           </p>
 
+          <div className="aa-hero-actions">
+            <a className="aa-hero-cta" href="#repository-start">
+              Start mapping a repository{" "}
+              <span aria-hidden="true">→</span>
+            </a>
+
+            <a className="aa-hero-secondary" href="#how-it-works">
+              See how it works <span aria-hidden="true">↓</span>
+            </a>
+          </div>
+
           {state.error && (
             <div
               className="aa-inline-error aa-landing-error"
@@ -347,6 +363,7 @@ function AppContent() {
           )}
 
           <section
+            id="repository-start"
             className="aa-input-card"
             aria-label="Choose a repository"
           >
@@ -429,10 +446,7 @@ function AppContent() {
               aria-label="Select a ZIP archive"
               onClick={() => zipInputRef.current?.click()}
               onKeyDown={(event) => {
-                if (
-                  event.key === "Enter" ||
-                  event.key === " "
-                ) {
+                if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   zipInputRef.current?.click();
                 }
@@ -446,9 +460,7 @@ function AppContent() {
                 setDragActive(true);
               }}
               onDragLeave={(event) => {
-                if (
-                  !event.currentTarget.contains(event.relatedTarget)
-                ) {
+                if (!event.currentTarget.contains(event.relatedTarget)) {
                   setDragActive(false);
                 }
               }}
@@ -483,6 +495,8 @@ function AppContent() {
             </p>
           </section>
         </div>
+
+        <ArchitecturePreview />
 
         <section className="aa-samples-section">
           <div className="aa-section-heading">

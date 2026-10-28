@@ -37,9 +37,12 @@ const SourceExplorer = lazy(
 
 const numberFormat = new Intl.NumberFormat("en-US");
 
-function Metric({ label, value }) {
+function Metric({ label, value, title }) {
   return (
-    <div className="aa-summary-metric">
+    <div
+      className="aa-summary-metric"
+      title={title}
+    >
       <span>{label}</span>
       <strong>{numberFormat.format(value ?? 0)}</strong>
     </div>
@@ -624,6 +627,7 @@ export default function AtlasWorkspace({
         <Metric
           label="Orphan files"
           value={analysis.stats.orphanFiles}
+          title="Files with no resolved incoming or outgoing internal import edges in the analyzed subset. Entry points, external-only modules, excluded relationships, and unresolved imports can also appear here; this is not a dead-code verdict."
         />
       </section>
 
@@ -725,7 +729,8 @@ export default function AtlasWorkspace({
                     <small>
                       Impact {starter.blastRadius} files ·{" "}
                       {starter.loc} LOC · Complexity{" "}
-                      {starter.cyclomaticComplexity}
+                      {starter.cyclomaticComplexity} ·{" "}
+                      {starter.connectionCount ?? 0} internal links
                     </small>
                   </li>
                 ))}

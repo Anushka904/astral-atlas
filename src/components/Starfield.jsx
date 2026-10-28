@@ -6,15 +6,16 @@
  * - Device pixel ratio is capped to reduce GPU and memory cost.
  * - Animation pauses when the document is hidden.
  * - Reduced-motion users receive a static star field.
+ * - Colours match the graphite, violet and cyan landing palette.
  */
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 const STAR_COLOURS = [
-  "#E8F5E9",
-  "#A5D6A7",
-  "#8BBB92",
-  "#66BB6A"
+  "#EDE9FE",
+  "#C4B5FD",
+  "#67E8F9",
+  "#F9A8D4"
 ];
 
 export default function Starfield() {
@@ -28,9 +29,7 @@ export default function Starfield() {
       return undefined;
     }
 
-    const context = canvas.getContext("2d", {
-      alpha: true
-    });
+    const context = canvas.getContext("2d", { alpha: true });
 
     if (!context) {
       return undefined;
@@ -50,10 +49,7 @@ export default function Starfield() {
 
     function createStars() {
       const area = width * height;
-      const count = Math.max(
-        55,
-        Math.min(260, Math.floor(area / 9500))
-      );
+      const count = Math.max(55, Math.min(260, Math.floor(area / 9500)));
 
       stars = Array.from({ length: count }, () => ({
         x: Math.random() * width,
@@ -62,10 +58,9 @@ export default function Starfield() {
         alpha: 0.18 + Math.random() * 0.54,
         phase: Math.random() * Math.PI * 2,
         speed: 0.0003 + Math.random() * 0.0008,
-        colour:
-          STAR_COLOURS[
-            Math.floor(Math.random() * STAR_COLOURS.length)
-          ]
+        colour: STAR_COLOURS[
+          Math.floor(Math.random() * STAR_COLOURS.length)
+        ]
       }));
     }
 
@@ -83,31 +78,15 @@ export default function Starfield() {
       const bounds = host.getBoundingClientRect();
 
       width = Math.max(documentWidth, bounds.width);
-      height = Math.max(
-        documentHeight,
-        bounds.height,
-        window.innerHeight
-      );
-
-      pixelRatio = Math.min(
-        window.devicePixelRatio || 1,
-        1.5
-      );
+      height = Math.max(documentHeight, bounds.height, window.innerHeight);
+      pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
 
       canvas.width = Math.ceil(width * pixelRatio);
       canvas.height = Math.ceil(height * pixelRatio);
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
 
-      context.setTransform(
-        pixelRatio,
-        0,
-        0,
-        pixelRatio,
-        0,
-        0
-      );
-
+      context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       createStars();
       drawStatic();
     }
@@ -119,13 +98,7 @@ export default function Starfield() {
         context.globalAlpha = star.alpha;
         context.fillStyle = star.colour;
         context.beginPath();
-        context.arc(
-          star.x,
-          star.y,
-          star.radius,
-          0,
-          Math.PI * 2
-        );
+        context.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
         context.fill();
       }
 
@@ -133,9 +106,7 @@ export default function Starfield() {
     }
 
     function animate(time) {
-      if (!active) {
-        return;
-      }
+      if (!active) return;
 
       if (
         reducedMotion.matches ||
@@ -146,8 +117,7 @@ export default function Starfield() {
         return;
       }
 
-      // Limit updates to approximately 30 FPS. Twinkling is decorative,
-      // so drawing on every display refresh is unnecessary.
+      // Decorative twinkling is capped near 30 FPS to avoid needless work.
       if (time - lastFrame < 33) {
         frameId = requestAnimationFrame(animate);
         return;
@@ -157,27 +127,14 @@ export default function Starfield() {
       context.clearRect(0, 0, width, height);
 
       for (const star of stars) {
-        const alpha =
-          star.alpha *
-          (
-            0.72 +
-            Math.sin(time * star.speed + star.phase) * 0.28
-          );
-
-        context.globalAlpha = Math.max(
-          0.08,
-          Math.min(0.8, alpha)
+        const alpha = star.alpha * (
+          0.72 + Math.sin(time * star.speed + star.phase) * 0.28
         );
 
+        context.globalAlpha = Math.max(0.08, Math.min(0.8, alpha));
         context.fillStyle = star.colour;
         context.beginPath();
-        context.arc(
-          star.x,
-          star.y,
-          star.radius,
-          0,
-          Math.PI * 2
-        );
+        context.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
         context.fill();
       }
 
@@ -186,9 +143,7 @@ export default function Starfield() {
     }
 
     function startAnimation() {
-      if (!active || frameId) {
-        return;
-      }
+      if (!active || frameId) return;
 
       if (
         reducedMotion.matches ||
@@ -230,20 +185,12 @@ export default function Starfield() {
     startAnimation();
 
     window.addEventListener("resize", resize);
-    document.addEventListener(
-      "visibilitychange",
-      handleVisibility
-    );
+    document.addEventListener("visibilitychange", handleVisibility);
+    reducedMotion.addEventListener("change", handleMotionPreference);
 
-    reducedMotion.addEventListener(
-      "change",
-      handleMotionPreference
-    );
-
-    const resizeObserver =
-      typeof ResizeObserver === "function"
-        ? new ResizeObserver(resize)
-        : null;
+    const resizeObserver = typeof ResizeObserver === "function"
+      ? new ResizeObserver(resize)
+      : null;
 
     resizeObserver?.observe(host);
 
@@ -251,18 +198,9 @@ export default function Starfield() {
       active = false;
       stopAnimation();
       resizeObserver?.disconnect();
-
       window.removeEventListener("resize", resize);
-      document.removeEventListener(
-        "visibilitychange",
-        handleVisibility
-      );
-
-      reducedMotion.removeEventListener(
-        "change",
-        handleMotionPreference
-      );
-
+      document.removeEventListener("visibilitychange", handleVisibility);
+      reducedMotion.removeEventListener("change", handleMotionPreference);
       context.clearRect(0, 0, width, height);
     };
   }, []);

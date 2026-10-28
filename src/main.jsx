@@ -1,10 +1,11 @@
 /**
  * Astral Atlas browser entry point.
  *
- * CSS order matters:
- * 1. App.jsx imports its landing and atlas styles.
- * 2. global.css preserves the existing local font imports and resets.
- * 3. palette-overrides.css applies the final green theme.
+ * CSS load order:
+ * 1. App.jsx loads component and layout styles.
+ * 2. global.css provides resets and locally hosted fonts.
+ * 3. palette-overrides.css retains the existing application styling.
+ * 4. tech-theme.css provides the final graphite/violet visual theme.
  */
 
 import React from "react";
@@ -14,6 +15,7 @@ import App from "./App.jsx";
 
 import "./styles/global.css";
 import "./styles/palette-overrides.css";
+import "./styles/tech-theme.css";
 
 const rootElement = document.getElementById("root");
 

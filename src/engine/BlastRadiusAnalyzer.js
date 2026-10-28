@@ -11,13 +11,12 @@ function roundScore(value) {
 }
 
 /**
- * Score how suitable a file's size is for a beginner's first change.
+ * Score how suitable a file's size is for a first change.
  *
- * The rule is intentionally transparent:
- * - Empty/unknown-size files are not recommended.
- * - Small files are reasonable but can be too trivial.
- * - Files between 10 and 300 LOC receive the full size score.
- * - Larger files lose points, down to a floor of 20.
+ * The score peaks around 80 LOC and changes continuously instead of giving
+ * every file from 10 through 300 LOC the same perfect score. Very small
+ * files may be trivial; larger files receive progressively fewer points.
+ * This is an explainable heuristic, not a prediction of defect risk.
  *
  * @param {number} loc
  * @returns {number}
@@ -28,17 +27,22 @@ export function scoreFileSize(loc) {
   }
 
   if (loc < 10) {
-    return 20 + loc * 8;
+    return 75 * (loc / 10);
+  }
+
+  if (loc <= 80) {
+    return 75 + ((loc - 10) / 70) * 25;
+  }
+
+  if (loc <= 150) {
+    return 100 - ((loc - 80) / 70) * 10;
   }
 
   if (loc <= 300) {
-    return 100;
+    return 90 - ((loc - 150) / 150) * 15;
   }
 
-  return Math.max(
-    20,
-    100 - (loc - 300) / 20
-  );
+  return Math.max(20, 75 - (loc - 300) * 0.035);
 }
 
 /**
@@ -159,9 +163,10 @@ export default class BlastRadiusAnalyzer {
    * Rank files as potential good-first-change starting points.
    *
    * Formula:
-   *   45% low blast radius
-   *   35% low cyclomatic complexity
+   *   40% low blast radius
+   *   30% low cyclomatic complexity
    *   20% reasonable file size
+   *   10% useful connection to the internal repository graph
    *
    * The returned score breakdown makes the recommendation explainable.
    * Files with parse failures or zero LOC are omitted because their metrics
@@ -192,6 +197,7 @@ export default class BlastRadiusAnalyzer {
       return [];
     }
 
+    const adjacency = graph.getAdjacency();
     const reverseAdjacency = graph.getAdjacency({
       reverse: true
     });
@@ -244,39 +250,60 @@ export default class BlastRadiusAnalyzer {
       );
 
       const sizeScore = scoreFileSize(node.loc);
+      const dependencyCount = adjacency.get(path)?.length ?? 0;
+      const dependentCount = reverseAdjacency.get(path)?.length ?? 0;
+      const connectionCount = dependencyCount + dependentCount;
+
+      // An isolated file may be an intentional entry point, test, or truly
+      // disconnected module. Do not automatically rank it as a perfect
+      // starting point merely because its measured blast radius is zero.
+      const connectivityScore = connectionCount === 0
+        ? 35
+        : Math.min(100, 35 + (65 * Math.min(connectionCount, 3)) / 3);
 
       const score =
-        0.45 * blastRadiusScore +
-        0.35 * complexityScore +
-        0.20 * sizeScore;
+        0.40 * blastRadiusScore +
+        0.30 * complexityScore +
+        0.20 * sizeScore +
+        0.10 * connectivityScore;
 
       rankings.push({
         path,
         score: roundScore(score),
         blastRadius,
         loc: node.loc,
-        cyclomaticComplexity:
-          node.cyclomaticComplexity,
+        cyclomaticComplexity: node.cyclomaticComplexity,
+        dependencyCount,
+        dependentCount,
+        connectionCount,
         breakdown: {
           blastRadiusScore: roundScore(blastRadiusScore),
           complexityScore: roundScore(complexityScore),
           sizeScore: roundScore(sizeScore),
+          connectivityScore: roundScore(connectivityScore),
           weights: {
-            blastRadius: 0.45,
-            complexity: 0.35,
-            size: 0.20
+            blastRadius: 0.40,
+            complexity: 0.30,
+            size: 0.20,
+            connectivity: 0.10
           }
         },
         explanation:
-          `Impact ${roundScore(blastRadiusScore)}/100; ` +
+          `Low-impact suitability ${roundScore(blastRadiusScore)}/100; ` +
           `simplicity ${roundScore(complexityScore)}/100; ` +
-          `size suitability ${roundScore(sizeScore)}/100.`
+          `size suitability ${roundScore(sizeScore)}/100; ` +
+          `repository connection ${roundScore(connectivityScore)}/100 ` +
+          `(${connectionCount} resolved internal connection${
+            connectionCount === 1 ? "" : "s"
+          }).`
       });
     }
 
     rankings.sort((a, b) =>
       b.score - a.score ||
       a.blastRadius - b.blastRadius ||
+      b.breakdown.connectivityScore - a.breakdown.connectivityScore ||
+      a.loc - b.loc ||
       a.path.localeCompare(b.path)
     );
 

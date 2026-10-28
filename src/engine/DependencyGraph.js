@@ -524,37 +524,57 @@ export default class DependencyGraph {
     const elements = [];
     const folders = new Map();
 
-    const addFolder = (folderName, color) => {
-      if (folders.has(folderName)) {
-        return;
-      }
-
-      const id = `folder::${folderName}`;
-
-      folders.set(folderName, id);
-
-      elements.push({
-        group: "nodes",
-        data: {
-          id,
-          label: folderName,
-          kind: "folder",
-          clusterColor: color
-        },
-        classes: "folder-cluster"
-      });
-    };
-
+    /**
+     * Ensure every directory between the repository root and a file's
+     * immediate parent exists as a nested Cytoscape compound node.
+     *
+     * For example, `packages/vite/src/index.ts` is grouped as:
+     * packages -> vite -> src -> index.ts.
+     * This keeps large top-level folders from expanding into hundreds of
+     * simultaneous file nodes and lets users explore one directory at a time.
+     *
+     * @param {string} path Repository-relative file path.
+     * @returns {string|undefined} ID of the deepest directory node.
+     */
     const addParent = (path) => {
       if (!showClusters || !path.includes("/")) {
         return undefined;
       }
 
-      const folderName = getTopLevelFolder(path);
+      const segments = path.split("/").filter(Boolean).slice(0, -1);
+      let currentPath = "";
+      let parentId;
 
-      addFolder(folderName, getClusterColor(folderName));
+      for (const segment of segments) {
+        currentPath = currentPath
+          ? `${currentPath}/${segment}`
+          : segment;
 
-      return folders.get(folderName);
+        let id = folders.get(currentPath);
+
+        if (!id) {
+          id = `folder::${currentPath}`;
+          folders.set(currentPath, id);
+
+          elements.push({
+            group: "nodes",
+            data: {
+              id,
+              label: segment,
+              baseLabel: segment,
+              folderPath: currentPath,
+              kind: "folder",
+              clusterColor: getClusterColor(currentPath),
+              ...(parentId ? { parent: parentId } : {})
+            },
+            classes: "folder-cluster"
+          });
+        }
+
+        parentId = id;
+      }
+
+      return parentId;
     };
 
     if (view === "dependencies") {

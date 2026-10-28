@@ -75,6 +75,80 @@ function safeCallback(callback, data, label) {
   }
 }
 
+const SKIP_REASON_LABELS = Object.freeze({
+  "invalid-path": { one: "invalid path", other: "invalid paths" },
+  "outside-subpath": {
+    one: "path outside the selected directory",
+    other: "paths outside the selected directory"
+  },
+  "excluded-directory": {
+    one: "path under an excluded dependency/build/vendor directory",
+    other: "paths under excluded dependency/build/vendor directories"
+  },
+  "hidden-file": { one: "hidden file", other: "hidden files" },
+  minified: { one: "minified file", other: "minified files" },
+  "too-large": {
+    one: "file over the size limit",
+    other: "files over the size limit"
+  },
+  "unsupported-extension": {
+    one: "unsupported file extension",
+    other: "unsupported file extensions"
+  },
+  "file-cap": {
+    one: "eligible file beyond the analysis limit",
+    other: "eligible files beyond the analysis limit"
+  },
+  symlink: {
+    one: "symbolic link not followed",
+    other: "symbolic links not followed"
+  },
+  "invalid-entry": {
+    one: "invalid archive entry",
+    other: "invalid archive entries"
+  },
+  "config-too-large": {
+    one: "oversized path configuration file",
+    other: "oversized path configuration files"
+  },
+  "binary-config": {
+    one: "binary path configuration file",
+    other: "binary path configuration files"
+  },
+  "binary-content": {
+    one: "file with binary content",
+    other: "files with binary content"
+  },
+  "hash-failure": {
+    one: "file whose content hash could not be computed",
+    other: "files whose content hash could not be computed"
+  }
+});
+
+/**
+ * Turn skip counters into a concise explanation for the analysis warning.
+ * The counters remain available as structured data on the loader result.
+ *
+ * @param {Record<string,number>} skippedByReason
+ * @returns {string}
+ */
+function formatSkippedReasons(skippedByReason) {
+  return Object.entries(skippedByReason ?? {})
+    .filter(([, count]) => Number.isFinite(count) && count > 0)
+    .sort(([reasonA, countA], [reasonB, countB]) =>
+      countB - countA || reasonA.localeCompare(reasonB)
+    )
+    .map(([reason, count]) => {
+      const labels = SKIP_REASON_LABELS[reason];
+      const label = labels
+        ? count === 1 ? labels.one : labels.other
+        : reason;
+
+      return `${count.toLocaleString()} ${label}`;
+    })
+    .join(", ");
+}
+
 /**
  * Abort immediately when the user has cancelled the operation.
  *
@@ -601,8 +675,15 @@ export default class RepoLoader {
     }
 
     if (filtered.skippedCount > 0) {
+      const reasonSummary = formatSkippedReasons(
+        filtered.skippedByReason
+      );
+
       warnings.push(
-        `${filtered.skippedCount.toLocaleString()} paths were omitted from the source-file set because of filtering or repository limits. Configuration files can still be loaded separately for alias resolution.`
+        `Source-file filtering excluded ${filtered.skippedCount.toLocaleString()} path${
+          filtered.skippedCount === 1 ? "" : "s"
+        }${reasonSummary ? ` (${reasonSummary})` : ""}. ` +
+        "Path configuration files can still be loaded separately for alias resolution."
       );
     }
 
@@ -902,8 +983,15 @@ export default class RepoLoader {
     }
 
     if (archive.skippedCount > 0) {
+      const reasonSummary = formatSkippedReasons(
+        archive.skippedByReason
+      );
+
       warnings.push(
-        `${archive.skippedCount.toLocaleString()} archive entries or source files were skipped.`
+        `ZIP filtering skipped ${archive.skippedCount.toLocaleString()} item${
+          archive.skippedCount === 1 ? "" : "s"
+        }${reasonSummary ? ` (${reasonSummary})` : ""}. ` +
+        "Path configuration files can still be loaded separately for alias resolution."
       );
     }
 
