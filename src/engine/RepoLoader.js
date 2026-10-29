@@ -33,7 +33,10 @@ import {
 
 import AtlasEdgeClient from "../services/atlasEdgeClient.js";
 import FetchQueue from "./FetchQueue.js";
-import CacheStore from "./CacheStore.js";
+import CacheStore, {
+  getParseCacheKey,
+  rebaseCachedSummary
+} from "./CacheStore.js";
 import { readZipArchive } from "../services/zipService.js";
 
 const MAX_PATH_CONFIG_BYTES = 100 * 1024;
@@ -737,7 +740,10 @@ export default class RepoLoader {
 
     try {
       cachedSummaries = await this.cacheStore.getMany(
-        filtered.files.map((file) => file.sha)
+        filtered.files.map((file) => ({
+          sha: file.sha,
+          path: file.path
+        }))
       );
     } catch (error) {
       cacheAvailable = false;
@@ -748,13 +754,23 @@ export default class RepoLoader {
       console.warn("Cache lookup failed.", error);
     }
 
-    const files = filtered.files.map((file) => ({
-      ...file,
-      content: null,
-      cachedSummary: cachedSummaries.get(file.sha) ?? null,
-      source: "github",
-      loadError: null
-    }));
+    const files = filtered.files.map((file) => {
+      // A content-identical file can appear at several paths. Cached parser
+      // metadata is content-derived, so always restore the current path/SHA
+      // before GraphBuilder consumes it.
+      const cachedSummary =
+        cachedSummaries.get(getParseCacheKey(file.sha, file.path)) ??
+        cachedSummaries.get(file.sha) ??
+        null;
+
+      return {
+        ...file,
+        content: null,
+        cachedSummary: rebaseCachedSummary(cachedSummary, file),
+        source: "github",
+        loadError: null
+      };
+    });
 
     const filesToDownload = files.filter(
       (file) => file.cachedSummary === null
@@ -965,7 +981,10 @@ export default class RepoLoader {
 
     try {
       cachedSummaries = await this.cacheStore.getMany(
-        archive.files.map((item) => item.sha)
+        archive.files.map((item) => ({
+          sha: item.sha,
+          path: item.path
+        }))
       );
     } catch (error) {
       cacheAvailable = false;
@@ -995,13 +1014,19 @@ export default class RepoLoader {
       );
     }
 
-    const files = archive.files.map((item) => ({
-      ...item,
-      cachedSummary:
-        cachedSummaries.get(item.sha) ?? null,
-      source: "zip",
-      loadError: null
-    }));
+    const files = archive.files.map((item) => {
+      const cachedSummary =
+        cachedSummaries.get(getParseCacheKey(item.sha, item.path)) ??
+        cachedSummaries.get(item.sha) ??
+        null;
+
+      return {
+        ...item,
+        cachedSummary: rebaseCachedSummary(cachedSummary, item),
+        source: "zip",
+        loadError: null
+      };
+    });
 
     const repo = {
       owner: null,

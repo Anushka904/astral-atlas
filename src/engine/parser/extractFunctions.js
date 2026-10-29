@@ -69,6 +69,150 @@ function getPropertyName(node, computed = false) {
   return null;
 }
 
+/** Return whether a node is exactly `module.exports`. */
+function isModuleExportsExpression(node) {
+  return Boolean(
+    node?.type === "MemberExpression" &&
+    node.object?.type === "Identifier" &&
+    node.object.name === "module" &&
+    getPropertyName(node.property, node.computed) === "exports"
+  );
+}
+
+/**
+ * Identify common CommonJS export assignment targets without guessing about
+ * dynamic property names. Examples: `exports.run`, `module.exports.run`,
+ * and `module.exports`.
+ */
+function getCommonJsExportTarget(left) {
+  if (left?.type !== "MemberExpression") {
+    return null;
+  }
+
+  if (isModuleExportsExpression(left)) {
+    return { kind: "default", name: "default" };
+  }
+
+  const propertyName = getPropertyName(left.property, left.computed);
+  if (!propertyName) {
+    return null;
+  }
+
+  if (left.object?.type === "Identifier" && left.object.name === "exports") {
+    return { kind: "named", name: propertyName };
+  }
+
+  if (isModuleExportsExpression(left.object)) {
+    return { kind: "named", name: propertyName };
+  }
+
+  return null;
+}
+
+/**
+ * Return the CommonJS public name for a function assigned directly to
+ * `exports.name`, `module.exports.name`, or a property in
+ * `module.exports = { name: function () {} }`.
+ */
+function getCommonJsFunctionExportNames(path) {
+  const parent = path.parentPath;
+
+  if (parent?.isAssignmentExpression() && parent.node.right === path.node) {
+    const target = getCommonJsExportTarget(parent.node.left);
+    if (target) {
+      return [target.name];
+    }
+  }
+
+  let objectPath = null;
+  let propertyName = null;
+
+  if (path.isObjectMethod()) {
+    objectPath = path.parentPath;
+    propertyName = getPropertyName(path.node.key, path.node.computed);
+  } else if (
+    parent?.isObjectProperty() &&
+    parent.node.value === path.node
+  ) {
+    objectPath = parent.parentPath;
+    propertyName = getPropertyName(parent.node.key, parent.node.computed);
+  }
+
+  if (
+    !propertyName ||
+    !objectPath?.isObjectExpression() ||
+    !objectPath.parentPath?.isAssignmentExpression() ||
+    !isModuleExportsExpression(objectPath.parentPath.node.left) ||
+    objectPath.parentPath.node.right !== objectPath.node
+  ) {
+    return [];
+  }
+
+  return [propertyName];
+}
+
+/**
+ * Resolve a statically named CommonJS `require()` binding.
+ * Supports `const mod = require("./mod")` and direct destructuring such as
+ * `const { save: persist } = require("./mod")`. Nested/dynamic patterns remain
+ * unresolved deliberately.
+ */
+function describeCommonJsRequire(bindingPath, binding) {
+  if (!bindingPath?.isVariableDeclarator()) {
+    return null;
+  }
+
+  const initializer = bindingPath.node.init;
+  const sourceNode = initializer?.arguments?.[0];
+
+  if (
+    initializer?.type !== "CallExpression" ||
+    initializer.callee?.type !== "Identifier" ||
+    initializer.callee.name !== "require" ||
+    sourceNode?.type !== "StringLiteral" ||
+    typeof sourceNode.value !== "string"
+  ) {
+    return null;
+  }
+
+  const pattern = bindingPath.node.id;
+  const localName = binding?.identifier?.name;
+  let importedName = null;
+
+  if (pattern?.type === "Identifier" && pattern.name === localName) {
+    importedName = "*";
+  } else if (pattern?.type === "ObjectPattern") {
+    for (const property of pattern.properties ?? []) {
+      if (property.type !== "ObjectProperty") {
+        continue;
+      }
+
+      const value = property.value?.type === "AssignmentPattern"
+        ? property.value.left
+        : property.value;
+
+      if (value?.type !== "Identifier" || value.name !== localName) {
+        continue;
+      }
+
+      importedName = getPropertyName(property.key, property.computed);
+      break;
+    }
+  }
+
+  if (!importedName) {
+    return null;
+  }
+
+  return {
+    importSource: sourceNode.value,
+    importedName,
+    importKind: importedName === "*"
+      ? "commonjs-namespace"
+      : "commonjs-named"
+  };
+}
+
 /**
  * Find a class context without crossing a normal function boundary.
  *
@@ -118,6 +262,11 @@ function findClassContext(path) {
       ) {
         classExportNames.push("default");
       }
+
+      // Class expressions can be exported directly from CommonJS, including
+      // `module.exports = class Store {}` and object properties in
+      // `module.exports = { Store: class Store {} }`.
+      classExportNames.push(...getCommonJsFunctionExportNames(current));
 
       return {
         className,
@@ -237,11 +386,16 @@ function getFunctionName(path, classContext) {
     return node.id.name;
   }
 
-  if (
-    parent?.isAssignmentExpression() &&
-    parent.node.left.type === "Identifier"
-  ) {
-    return parent.node.left.name;
+  if (parent?.isAssignmentExpression()) {
+    const target = getCommonJsExportTarget(parent.node.left);
+
+    if (target) {
+      return target.name;
+    }
+
+    if (parent.node.left.type === "Identifier") {
+      return parent.node.left.name;
+    }
   }
 
   if (parent?.isExportDefaultDeclaration()) {
@@ -383,6 +537,16 @@ function describeBinding(binding) {
       break;
     }
 
+    const commonJsImportInfo = describeCommonJsRequire(
+      bindingPath,
+      current
+    );
+
+    if (commonJsImportInfo) {
+      importInfo = commonJsImportInfo;
+      break;
+    }
+
     // Follow only simple identifier assignments. We deliberately don't
     // perform arbitrary data-flow or points-to analysis in this stage.
     if (
@@ -417,6 +581,11 @@ function describeBinding(binding) {
  * @returns {string[]}
  */
 function getDirectExportNames(path, name) {
+  const commonJsNames = getCommonJsFunctionExportNames(path);
+  if (commonJsNames.length > 0) {
+    return commonJsNames;
+  }
+
   if (
     path.node.type === "ClassMethod" ||
     path.node.type === "ClassPrivateMethod" ||

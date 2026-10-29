@@ -196,6 +196,36 @@ export default class CallResolver {
   findTargets(context, caller, call) {
     const filePath = caller.filePath;
 
+    // `new namespace.Type()` is a member-shaped constructor call. Resolve it
+    // through the namespace import only when the module and exported class
+    // are both statically known; only explicit constructor bodies become call
+    // graph targets.
+    if (
+      call.callKind === "constructor" &&
+      call.receiverImportSource &&
+      call.propertyName
+    ) {
+      const targetPath = this.findImportTarget(
+        context.graph,
+        filePath,
+        call.receiverImportSource
+      );
+      const exportName = call.receiverImportedName === "*"
+        ? call.propertyName
+        : call.receiverImportedName;
+
+      if (targetPath && exportName) {
+        return this.resolveExportedClassMethods(
+          context,
+          targetPath,
+          exportName,
+          "constructor"
+        );
+      }
+
+      return [];
+    }
+
     if (
       call.callKind === "identifier" ||
       call.callKind === "constructor"
@@ -238,18 +268,41 @@ export default class CallResolver {
         }
 
         if (call.callKind === "constructor") {
+          const exportName =
+            call.importedName === "*" &&
+            call.importKind === "commonjs-namespace"
+              ? "default"
+              : call.importedName;
+
+          if (!exportName || exportName === "*") {
+            return [];
+          }
+
           return this.resolveExportedClassMethods(
             context,
             targetPath,
-            call.importedName,
+            exportName,
             "constructor"
           );
+        }
+
+        // In CommonJS, `const fn = require("./fn")` can itself be callable
+        // when the target assigns a function to module.exports. Treat this as
+        // the module's default export, but do not guess for ESM namespace imports.
+        const exportName =
+          call.importedName === "*" &&
+          call.importKind === "commonjs-namespace"
+            ? "default"
+            : call.importedName;
+
+        if (!exportName || exportName === "*") {
+          return [];
         }
 
         return this.resolveExportedFunctions(
           context,
           targetPath,
-          call.importedName
+          exportName
         );
       }
 
@@ -693,6 +746,13 @@ export default class CallResolver {
     }
 
     if (
+      call.receiverImportSource &&
+      call.receiverImportKind?.startsWith("commonjs-")
+    ) {
+      return "commonjs-member-target-not-found";
+    }
+
+    if (
       call.callKind === "member" ||
       call.callKind === "optional-member" ||
       call.callKind === "dynamic-member"
@@ -701,7 +761,9 @@ export default class CallResolver {
     }
 
     if (call.importSource) {
-      return "imported-symbol-target-not-found";
+      return call.importKind?.startsWith("commonjs-")
+        ? "commonjs-export-target-not-found"
+        : "imported-symbol-target-not-found";
     }
 
     if (call.callKind === "constructor") {

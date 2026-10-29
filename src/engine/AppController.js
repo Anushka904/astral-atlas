@@ -36,6 +36,8 @@ function createInitialState() {
       graphMs: null,
       layoutMs: null,
       cacheHitRate: null,
+      cacheHits: null,
+      cacheMisses: null,
       fps: null
     }
   };
@@ -273,6 +275,8 @@ export default class AppController {
           graphMs: null,
           layoutMs: null,
           cacheHitRate: null,
+          cacheHits: null,
+          cacheMisses: null,
           fps: null
         }
       });
@@ -377,6 +381,25 @@ export default class AppController {
       const cacheStats =
         this.cacheStore.getStats?.() ?? {};
 
+      // Report a file-level hit rate. CacheStore's own counters deduplicate
+      // content hashes, while the UI's question is how many of the files in
+      // this repository avoided parsing. Identical files at multiple paths
+      // therefore count as individual file cache hits here.
+      const cacheTotal = Number.isFinite(parsed.stats?.total)
+        ? parsed.stats.total
+        : Math.max(0, Number(cacheStats.hits ?? 0) + Number(cacheStats.misses ?? 0));
+      const cacheHits = Number.isFinite(parsed.stats?.cacheHits)
+        ? Math.min(cacheTotal, Math.max(0, parsed.stats.cacheHits))
+        : Number.isFinite(cacheStats.hits)
+          ? Math.min(cacheTotal, Math.max(0, cacheStats.hits))
+          : null;
+      const cacheMisses = cacheHits === null
+        ? null
+        : Math.max(0, cacheTotal - cacheHits);
+      const cacheHitRate = cacheTotal > 0 && cacheHits !== null
+        ? cacheHits / cacheTotal
+        : null;
+
       const graphStats = {
         ...graph.getStats(),
         cycleGroups: cycles.cycles.length,
@@ -388,10 +411,9 @@ export default class AppController {
         parseMs: Math.round(parseMs),
         graphMs: Math.round(graphMs),
         layoutMs: null,
-        cacheHitRate:
-          Number.isFinite(cacheStats.hitRate)
-            ? cacheStats.hitRate
-            : null,
+        cacheHitRate,
+        cacheHits,
+        cacheMisses,
         fps: null,
         generatedAt: new Date().toISOString()
       };

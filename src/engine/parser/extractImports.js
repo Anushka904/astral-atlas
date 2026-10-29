@@ -58,6 +58,53 @@ function getName(node) {
   return null;
 }
 
+function getStaticPropertyName(node, computed = false) {
+  if (!node) return null;
+  if (node.type === "Identifier" && !computed) return node.name;
+  if (node.type === "StringLiteral" || node.type === "NumericLiteral") {
+    return String(node.value);
+  }
+  return null;
+}
+
+function isModuleExportsExpression(node) {
+  return Boolean(
+    node?.type === "MemberExpression" &&
+    node.object?.type === "Identifier" &&
+    node.object.name === "module" &&
+    getStaticPropertyName(node.property, node.computed) === "exports"
+  );
+}
+
+function getCommonJsExportTarget(left) {
+  if (left?.type !== "MemberExpression") return null;
+  if (isModuleExportsExpression(left)) {
+    return { kind: "default", name: "default" };
+  }
+
+  const name = getStaticPropertyName(left.property, left.computed);
+  if (!name) return null;
+
+  if (left.object?.type === "Identifier" && left.object.name === "exports") {
+    return { kind: "named", name };
+  }
+  if (isModuleExportsExpression(left.object)) {
+    return { kind: "named", name };
+  }
+  return null;
+}
+
+function getObjectExportProperties(objectExpression) {
+  if (objectExpression?.type !== "ObjectExpression") return [];
+
+  return (objectExpression.properties ?? []).flatMap((property) => {
+    if (property.type !== "ObjectProperty") return [];
+    const exportedName = getStaticPropertyName(property.key, property.computed);
+    if (!exportedName) return [];
+    return [{ exportedName, value: property.value }];
+  });
+}
+
 /**
  * Return a stable identity for a Babel lexical binding.
  *
@@ -335,6 +382,19 @@ export function extractExports(ast) {
         return;
       }
 
+      if (node.type === "AssignmentExpression") {
+        const target = getCommonJsExportTarget(node.left);
+        if (target?.kind === "named") {
+          names.add(target.name);
+        } else if (target?.kind === "default") {
+          names.add("default");
+          for (const property of getObjectExportProperties(node.right)) {
+            names.add(property.exportedName);
+          }
+        }
+        return;
+      }
+
       if (node.type !== "ExportNamedDeclaration") {
         return;
       }
@@ -455,6 +515,37 @@ export function extractExportBindings(ast) {
           });
         }
 
+        return;
+      }
+
+      if (node.type === "AssignmentExpression") {
+        const target = getCommonJsExportTarget(node.left);
+        if (!target) return;
+
+        if (target.kind === "named") {
+          if (node.right?.type === "Identifier") {
+            addLocalExport(target.name, node.right.name, path.scope);
+          }
+          return;
+        }
+
+        // `module.exports = localFunction` and
+        // `module.exports = { publicName: localFunction }` expose an existing
+        // lexical binding. Function/class expressions are marked at extraction
+        // time and do not need a binding mapping here.
+        if (node.right?.type === "Identifier") {
+          addLocalExport("default", node.right.name, path.scope);
+        } else if (node.right?.type === "ObjectExpression") {
+          for (const property of getObjectExportProperties(node.right)) {
+            if (property.value?.type === "Identifier") {
+              addLocalExport(
+                property.exportedName,
+                property.value.name,
+                path.scope
+              );
+            }
+          }
+        }
         return;
       }
 

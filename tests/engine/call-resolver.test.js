@@ -286,6 +286,183 @@ describe("CallResolver", () => {
     ).toBe("Store.save");
   });
 
+  it("resolves a destructured CommonJS require with a renamed local binding", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          const { save: persist } = require("./store");
+
+          export function run() {
+            return persist();
+          }
+        `
+      },
+      {
+        path: "src/store.js",
+        source: `
+          function save() {
+            return true;
+          }
+
+          exports.save = save;
+        `
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "persist");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["save"]);
+  });
+
+  it("resolves a method call through a CommonJS namespace require", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          const store = require("./store");
+
+          export function run() {
+            return store.save();
+          }
+        `
+      },
+      {
+        path: "src/store.js",
+        source: `
+          function save() {
+            return true;
+          }
+
+          module.exports = { save };
+        `
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "save");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["save"]);
+  });
+
+  it("resolves a function expression assigned directly to exports.name", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          const { save } = require("./store");
+          export function run() {
+            return save();
+          }
+        `
+      },
+      {
+        path: "src/store.js",
+        source: `exports.save = function saveImpl() { return true; };`
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "save");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["save"]);
+  });
+
+  it("resolves a class exported through module.exports object assignment", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          const models = require("./models");
+          export function run() {
+            return new models.Store();
+          }
+        `
+      },
+      {
+        path: "src/models.js",
+        source: `
+          class Store {
+            constructor() { this.ready = true; }
+          }
+          module.exports = { Store };
+        `
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "Store");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["Store.constructor"]);
+  });
+
+  it("resolves a callable CommonJS module.exports default function", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          const runTask = require("./task");
+
+          export function run() {
+            return runTask();
+          }
+        `
+      },
+      {
+        path: "src/task.js",
+        source: `module.exports = function doTask() { return true; };`
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "runTask");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["default"]);
+  });
+
+  it("resolves an explicit constructor reached through an ESM namespace", () => {
+    const graph = makeGraph([
+      {
+        path: "src/app.js",
+        source: `
+          import * as models from "./models.js";
+
+          export function run() {
+            return new models.Store();
+          }
+        `
+      },
+      {
+        path: "src/models.js",
+        source: `
+          export class Store {
+            constructor() {
+              this.ready = true;
+            }
+          }
+        `
+      }
+    ]);
+
+    new CallResolver().resolve(graph);
+
+    const reference = getCall(graph, "Store");
+    expect(reference.status).toBe("resolved");
+    expect(getTargetFunctions(graph, reference).map((fn) => fn.name))
+      .toEqual(["Store.constructor"]);
+  });
+
   it("does not invent a target for a dynamic computed member call", () => {
     const graph = makeGraph([
       {

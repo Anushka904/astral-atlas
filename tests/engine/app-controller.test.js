@@ -105,8 +105,8 @@ function makeParserPool() {
         results,
         stats: {
           total: files.length,
-          parsed: files.length,
-          cacheHits: 0,
+          parsed: Math.max(0, files.length - 1),
+          cacheHits: Math.min(1, files.length),
           failed: 0,
           cacheWriteFailures: 0
         }

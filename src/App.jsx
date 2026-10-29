@@ -46,6 +46,8 @@ const INITIAL_STATE = {
     graphMs: null,
     layoutMs: null,
     cacheHitRate: null,
+    cacheHits: null,
+    cacheMisses: null,
     fps: null
   }
 };
